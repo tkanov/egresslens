@@ -1,4 +1,4 @@
-EgressLens will observe outbound network activity for a command run inside a controlled Linux environment. 
+EgressLens will observe outbound network activity for a command run inside a controlled Linux environment. This is currently 👷**WIP**👷
 
 It runs your command, traces network syscalls with strace, and parses connect/send events into JSONL for analysis. 
 
