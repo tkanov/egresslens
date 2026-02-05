@@ -1,0 +1,77 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+build/
+dist/
+.eggs/
+pip-wheel-metadata/
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+.mypy_cache/
+.python-version
+.env
+.env.*
+venv/
+ENV/
+.venv/
+env/
+venv*/
+env*/
+
+# PyInstaller
+*.spec
+*.manifest
+
+# Distribution / packaging
+*.egg-info/
+.installed.cfg
+
+# Node / TypeScript
+node_modules/
+dist/
+build/
+out/
+lib/
+.next/
+.next/cache/
+.vite/
+.eslintcache
+.parcel-cache/
+.cache/
+*.tsbuildinfo
+yarn-error.log*
+yarn-debug.log*
+pnpm-debug.log*
+npm-debug.log*
+
+# Logs
+logs/
+*.log
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Misc
+Thumbs.db
+ehthumbs.db
