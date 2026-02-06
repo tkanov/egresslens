@@ -14,6 +14,12 @@ __pycache__
 dist
 build
 .egresslens
+.venv
+venv
+env
+.pytest_cache
+*.coverage
+htmlcov
 
 # IDE
 .vscode
@@ -33,3 +39,4 @@ Thumbs.db
 # Other
 .env
 *.log
+egresslens-output

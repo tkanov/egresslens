@@ -11,7 +11,14 @@ RUN apt-get update && \
     strace \
     curl \
     ca-certificates \
+    python3 \
+    python3-pip \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
+
+# Create symlinks for python and pip (python3 -> python, pip3 -> pip)
+RUN ln -sf /usr/bin/python3 /usr/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/bin/pip
 
 # Set working directory
 WORKDIR /work

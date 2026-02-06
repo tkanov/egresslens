@@ -7,6 +7,9 @@
 .Trashes
 Icon?
 
+TESTING.md
+
+
 # Python
 __pycache__/
 *.py[cod]
@@ -78,3 +81,6 @@ ehthumbs.db
 
 # EgressLens output
 egresslens-output/
+
+# per-project venv
+sample_app/.venv/
