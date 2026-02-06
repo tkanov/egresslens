@@ -29,3 +29,11 @@ The API will be available at `http://localhost:8000`
 - `GET /api/reports/{id}/events` - Get events for a report
 - `GET /api/reports/{id}/export.md` - Export report as markdown
 - `GET /health` - Health check
+
+## Compatibility
+
+The backend accepts JSONL output from both CLI commands:
+- `egresslens watch` - For arbitrary commands
+- `egresslens run-app` - For Python projects with automatic dependency installation
+
+Both commands produce the same JSONL event format and are fully compatible with the backend API.

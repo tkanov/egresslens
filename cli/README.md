@@ -105,3 +105,20 @@ By default, the CLI uses `ubuntu:24.04` and will install strace on each run (slo
 ## Security Note
 
 This tool requires elevated Docker capabilities (`CAP_SYS_PTRACE`) and relaxed seccomp settings to use `strace`. This reduces container isolation. See the main project README for security recommendations.
+
+## Python Support
+
+The `run-app` command supports running Python projects with automatic dependency installation:
+
+```bash
+# Python app with requirements.txt
+egresslens run-app ./my_python_app --args "arg1 arg2"
+
+# Dependencies are automatically installed from requirements.txt
+# The root filesystem is read-only, but pip can write to:
+# - /tmp (100MB tmpfs for installations)
+# - /root/.local (100MB tmpfs for user site-packages)
+# - /root/.cache (50MB tmpfs for pip cache)
+```
+
+**Note:** Python dependencies are installed fresh in each container run into temporary in-memory filesystems. This is by design for security and reproducibility. No persistent state is stored in the container.

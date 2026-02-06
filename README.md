@@ -19,3 +19,52 @@ You can explore the results in a web UI to see top destinations, timelines, and 
 
 ---
 
+## Analyzing Python projects
+
+EgressLens provides a dedicated `run-app` command for analyzing **Python projects only**. This command automatically discovers your app's entry point, installs dependencies from `requirements.txt` if present, and captures all network activity.
+
+### Quick Start
+
+```bash
+# Basic usage
+egresslens run-app ./your_python_app
+
+# With arguments
+egresslens run-app ./your_python_app --args "arg1 arg2"
+
+# Example with sample_app
+egresslens run-app ./sample_app --args "dns example.com"
+```
+
+### App Structure Requirements
+
+Your Python app directory should contain one of these entry points:
+- `__main__.py` (run as: `python -m <app_name>`)
+- `main.py` (run as: `python main.py`)
+- `app.py` (run as: `python app.py`)
+
+**Optional: Automatic dependency installation**
+- Include a `requirements.txt` file in your app directory
+- Dependencies will be installed automatically via `pip install -r requirements.txt` before the app runs
+
+### Example App Structure
+
+```
+my_app/
+├── app.py              # Entry point (required)
+├── requirements.txt    # Dependencies (optional)
+└── other_modules.py    # Additional files
+```
+
+### Output
+
+The command produces the same output format as `egresslens watch`:
+- `egresslens-output/egress.jsonl` - Structured network events
+- `egresslens-output/run.json` - Run metadata and statistics
+- `egresslens-output/cmd_stdout` - Application output
+- `egresslens-output/cmd_stderr` - Application errors
+
+See [sample_app/](sample_app/README.md) for a complete working example.
+
+---
+
