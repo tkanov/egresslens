@@ -1,10 +1,7 @@
 """Docker runner for executing commands with strace."""
 
-import os
 import shlex
-import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -56,24 +53,11 @@ class DockerRunner:
         if not strace_output_path.exists():
             strace_output_path.touch()
 
-    def _safe_write_text(self, path: Path, text: str) -> None:
-        """Write text to `path`, creating parent directories and ignoring IO errors.
-
-        This centralizes the repeated pattern of creating parents and writing logs,
-        and intentionally ignores failures (best-effort logging).
-        """
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding='utf-8')
-        except OSError:
-            pass
-
     def run_with_strace(
         self,
         command: list[str],
         work_dir: Path,
         strace_output_path: Path,
-        logs_output_path: Optional[Path] = None,
     ) -> tuple[int, Optional[str]]:
         """Run command in Docker container with strace.
 
@@ -86,16 +70,15 @@ class DockerRunner:
             Tuple of (exit_code, error_message). error_message is None on success.
         """
         if self.client:
-            return self._run_with_docker_sdk(command, work_dir, strace_output_path, logs_output_path)
+            return self._run_with_docker_sdk(command, work_dir, strace_output_path)
         else:
-            return self._run_with_subprocess(command, work_dir, strace_output_path, logs_output_path)
+            return self._run_with_subprocess(command, work_dir, strace_output_path)
 
     def _run_with_docker_sdk(
         self,
         command: list[str],
         work_dir: Path,
         strace_output_path: Path,
-        logs_output_path: Optional[Path] = None,
     ) -> tuple[int, Optional[str]]:
         """Run using Docker Python SDK."""
         try:
@@ -129,15 +112,6 @@ class DockerRunner:
             # Wait for container to finish
             exit_code = container.wait()["StatusCode"]
 
-            # Check container logs for diagnostics and write them if requested
-            try:
-                logs_str = container.logs().decode('utf-8', errors='replace')
-            except Exception:
-                logs_str = ""
-
-            if logs_output_path is not None:
-                self._safe_write_text(logs_output_path, logs_str)
-
             # Ensure strace file exists (touch if missing)
             self._ensure_strace_file_exists(strace_output_path)
 
@@ -154,7 +128,6 @@ class DockerRunner:
         command: list[str],
         work_dir: Path,
         strace_output_path: Path,
-        logs_output_path: Optional[Path] = None,
     ) -> tuple[int, Optional[str]]:
         """Run using docker subprocess command."""
         try:
@@ -185,9 +158,6 @@ class DockerRunner:
             )
 
             if run_result.returncode != 0:
-                # Write start error to logs if requested
-                if logs_output_path is not None:
-                    self._safe_write_text(logs_output_path, run_result.stderr or "")
                 return 1, f"Failed to start container: {run_result.stderr}"
 
             container_id = run_result.stdout.strip()
@@ -212,14 +182,6 @@ class DockerRunner:
                 except ValueError:
                     pass
 
-            # Get container logs for better diagnostics and write them to file
-                try:
-                    logs_result = subprocess.run(["docker", "logs", container_id], capture_output=True, text=True, check=False)
-                    if logs_output_path is not None:
-                        self._safe_write_text(logs_output_path, logs_result.stdout or "")
-                except Exception:
-                    pass
-
             # Ensure strace file exists (touch if missing)
             self._ensure_strace_file_exists(strace_output_path)
 
@@ -237,7 +199,6 @@ def run_docker_command(
     work_dir: Path,
     image: str,
     strace_output_path: Path,
-    logs_output_path: Optional[Path] = None,
 ) -> tuple[int, Optional[str]]:
     """Convenience function to run command in Docker with strace.
 
@@ -251,5 +212,5 @@ def run_docker_command(
         Tuple of (exit_code, error_message). error_message is None on success.
     """
     runner = DockerRunner(image=image)
-    return runner.run_with_strace(command, work_dir, strace_output_path, logs_output_path)
+    return runner.run_with_strace(command, work_dir, strace_output_path)
 
