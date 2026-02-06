@@ -79,6 +79,9 @@ logs/
 Thumbs.db
 ehthumbs.db
 
+# Database
+*.db
+
 # EgressLens output
 egresslens-output/
 
