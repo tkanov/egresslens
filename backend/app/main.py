@@ -45,7 +45,6 @@ app.add_middleware(
 HIGH_DEST_THRESHOLD = 50
 FAILURE_THRESHOLD = 0.10
 USUAL_PORTS = {80, 443, 53, 22}
-DIRECT_IP_THRESHOLD = 0.20  # < 20% have resolved_domain
 
 
 @app.on_event("startup")
@@ -82,10 +81,21 @@ def compute_aggregates(events: List[EventSchema]) -> dict:
 
     # Count destinations
     dest_counter = Counter((e.dst_ip, e.dst_port) for e in events)
+    
+    # Build protocol mapping for each destination (most common protocol)
+    dest_protocols: dict[tuple[str, int], str] = {}
+    for e in events:
+        key = (e.dst_ip, e.dst_port)
+        if key not in dest_protocols:
+            # Find most common protocol for this destination
+            protocols = [ev.proto for ev in events if ev.dst_ip == e.dst_ip and ev.dst_port == e.dst_port]
+            dest_protocols[key] = Counter(protocols).most_common(1)[0][0]
+    
     top_destinations = [
         {
             "dst_ip": ip,
             "dst_port": port,
+            "proto": dest_protocols.get((ip, port), "unknown"),
             "count": count,
             "domain": next(
                 (e.resolved_domain for e in events if e.dst_ip == ip and e.dst_port == port and e.resolved_domain),
@@ -134,21 +144,6 @@ def calculate_flags(events: List[EventSchema], summary: dict) -> List[dict]:
             "description": f"Found connections to unusual ports: {sorted(unusual_ports)}",
             "severity": "medium",
         })
-
-    # Flag 4: Direct IP heavy
-    if events:
-        resolved_count = sum(1 for e in events if e.resolved_domain)
-        resolved_rate = resolved_count / len(events)
-        if resolved_rate < DIRECT_IP_THRESHOLD:
-            if resolved_count == 0:
-                description = f"No connections have resolved domains (threshold: {DIRECT_IP_THRESHOLD:.1%})"
-            else:
-                description = f"Only {resolved_rate:.1%} of connections have resolved domains (threshold: {DIRECT_IP_THRESHOLD:.1%})"
-            flags.append({
-                "name": "Direct IP heavy",
-                "description": description,
-                "severity": "low",
-            })
 
     return flags
 
@@ -324,13 +319,14 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
         md_lines.extend([
             "## Top Destinations",
             "",
-            "| IP | Port | Count | Domain |",
-            "|----|------|-------|--------|",
+            "| IP | Port | Protocol | Count | Domain |",
+            "|----|------|----------|-------|--------|",
         ])
         for dest in top_destinations[:20]:  # Show top 20 in export
             domain = dest.get("domain") or "-"
+            proto = dest.get("proto", "-")
             md_lines.append(
-                f"| {dest['dst_ip']} | {dest['dst_port']} | {dest['count']} | {domain} |"
+                f"| {dest['dst_ip']} | {dest['dst_port']} | {proto.upper()} | {dest['count']} | {domain} |"
             )
         md_lines.append("")
 
