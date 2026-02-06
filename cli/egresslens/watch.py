@@ -38,18 +38,17 @@ def watch_command(
     strace_path = output_dir / "egress.strace"
     jsonl_path = output_dir / "egress.jsonl"
     metadata_path = output_dir / "run.json"
+    logs_path = output_dir / "container.log"
 
     # Record start time
     start_time = datetime.now()
 
-    # Run command in Docker with strace (docker-only). Also capture container logs.
-    logs_path = output_dir / "container.log"
+    # Run command in Docker with strace
     exit_code, error = run_docker_command(
         command=list(command),
         work_dir=cwd,
         image=image,
         strace_output_path=strace_path,
-        logs_output_path=logs_path,
     )
     if error:
         print(f"Warning: {error}", file=__import__("sys").stderr)
