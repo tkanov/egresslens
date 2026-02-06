@@ -18,9 +18,24 @@ app = FastAPI(
 )
 
 # CORS middleware
+# Allow requests from Vite dev server and common forwarded ports
+# For dev containers with custom forwarded ports, set ALLOWED_ORIGINS env var
+import os
+allowed_origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+]
+
+# Allow additional origins via environment variable (comma-separated)
+# Example: ALLOWED_ORIGINS="http://localhost:8080,http://127.0.0.1:8080"
+if os.getenv("ALLOWED_ORIGINS"):
+    allowed_origins.extend([origin.strip() for origin in os.getenv("ALLOWED_ORIGINS").split(",")])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -106,9 +121,9 @@ def calculate_flags(events: List[EventSchema], summary: dict) -> List[dict]:
     # Flag 2: High failure rate
     if summary.get("failure_rate", 0.0) > FAILURE_THRESHOLD:
         flags.append({
-            "name": "High failure rate",
+            "name": "Elevated failure rate",
             "description": f"Failure rate is {summary['failure_rate']:.1%} (threshold: {FAILURE_THRESHOLD:.1%})",
-            "severity": "high",
+            "severity": "medium",
         })
 
     # Flag 3: Unusual ports
@@ -125,9 +140,13 @@ def calculate_flags(events: List[EventSchema], summary: dict) -> List[dict]:
         resolved_count = sum(1 for e in events if e.resolved_domain)
         resolved_rate = resolved_count / len(events)
         if resolved_rate < DIRECT_IP_THRESHOLD:
+            if resolved_count == 0:
+                description = f"No connections have resolved domains (threshold: {DIRECT_IP_THRESHOLD:.1%})"
+            else:
+                description = f"Only {resolved_rate:.1%} of connections have resolved domains (threshold: {DIRECT_IP_THRESHOLD:.1%})"
             flags.append({
                 "name": "Direct IP heavy",
-                "description": f"Only {resolved_rate:.1%} of connections have resolved domains (threshold: {DIRECT_IP_THRESHOLD:.1%})",
+                "description": description,
                 "severity": "low",
             })
 
@@ -200,13 +219,20 @@ def get_report(report_id: str, db: Session = Depends(get_db)):
 
     # Convert top_events JSON to EventSchema objects
     top_events = [EventSchema(**event) for event in report.top_events]
+    
+    # Recalculate flags from stored events to ensure they use the latest logic
+    # We need all events, not just top_events, so we'll use the stored events
+    # For now, we'll recalculate from top_events (which may be a subset)
+    # In a production system, you'd want to store all events or recalculate from the original file
+    all_events = [EventSchema(**event) for event in report.top_events]
+    flags = calculate_flags(all_events, report.summary)
 
     return ReportResponse(
         id=report.id,
         created_at=report.created_at,
         metadata=report.run_metadata,  # Map run_metadata to metadata for API
         summary=report.summary,
-        flags=report.flags,
+        flags=flags,
         top_events=top_events,
     )
 

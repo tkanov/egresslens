@@ -91,7 +91,11 @@ class DockerRunner:
                 command=strace_cmd,
                 detach=True,
                 read_only=True,
-                tmpfs={"/tmp": "rw,noexec,nosuid,size=100m"},
+                tmpfs={
+                    "/tmp": "rw,noexec,nosuid,size=100m",
+                    "/root/.local": "rw,nosuid,size=100m",
+                    "/root/.cache": "rw,nosuid,size=50m",
+                },
                 cap_drop=["ALL"],
                 cap_add=["SYS_PTRACE"],
                 security_opt=["seccomp=unconfined", "no-new-privileges"],
@@ -143,6 +147,8 @@ class DockerRunner:
                     "-d",
                     "--read-only",
                     "--tmpfs", "/tmp:rw,noexec,nosuid,size=100m",
+                    "--tmpfs", "/root/.local:rw,nosuid,size=100m",
+                    "--tmpfs", "/root/.cache:rw,nosuid,size=50m",
                     "--cap-drop", "ALL",
                     "--cap-add", "SYS_PTRACE",
                     "--security-opt", "seccomp=unconfined",
@@ -213,4 +219,49 @@ def run_docker_command(
     """
     runner = DockerRunner(image=image)
     return runner.run_with_strace(command, work_dir, strace_output_path)
+
+
+def run_python_app(
+    app_path: Path,
+    entry_point: str,
+    app_args: list[str],
+    has_requirements: bool,
+    image: str,
+    strace_output_path: Path,
+) -> tuple[int, Optional[str]]:
+    """Run a Python app in Docker with strace, installing dependencies if needed.
+
+    Args:
+        app_path: Path to the app directory (will be mounted as /work)
+        entry_point: Name of the Python entry point file (e.g., "app.py", "main.py")
+        app_args: Command-line arguments to pass to the app
+        has_requirements: Whether to install from requirements.txt before running
+        image: Docker image to use
+        strace_output_path: Path where strace output will be saved
+
+    Returns:
+        Tuple of (exit_code, error_message). error_message is None on success.
+    """
+    # Build the command to run in the container
+    # If entry_point is __main__.py, run as module; otherwise run the file directly
+    if entry_point == "__main__.py":
+        python_cmd = ["python", "-m", app_path.name] + app_args
+    else:
+        python_cmd = ["python", entry_point] + app_args
+
+    # If requirements.txt exists, install dependencies first
+    if has_requirements:
+        # Install to /tmp since container filesystem is read-only
+        # Use --break-system-packages for PEP 668 compliance in container
+        install_cmd = "pip install -q --break-system-packages --target=/tmp/pypackages -r requirements.txt"
+        python_cmd_str = " ".join(shlex.quote(arg) for arg in python_cmd)
+        # Set PYTHONPATH to include installed packages
+        combined_cmd = ["sh", "-c", f"{install_cmd} && PYTHONPATH=/tmp/pypackages:$PYTHONPATH {python_cmd_str}"]
+        command = combined_cmd
+    else:
+        command = python_cmd
+
+    # Use the standard Docker runner
+    runner = DockerRunner(image=image)
+    return runner.run_with_strace(command, app_path, strace_output_path)
 
