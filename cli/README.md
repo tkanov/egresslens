@@ -32,7 +32,7 @@ egresslens watch -- <command>
 
 - `--out <path>`: Output directory (default: `egresslens-output/`)
 - `--mode docker|host`: Execution mode (default: `docker`)
-- `--image <name>`: Docker base image (default: `ubuntu:24.04`)
+- `--image <name>`: Docker image with strace pre-installed (default: `egresslens/base:latest`)
 - `--no-enrich`: Disable DNS enrichment (reverse lookups)
 
 ### Examples
@@ -68,7 +68,7 @@ exit_code = watch_command(
     command=["curl", "https://example.com"],
     output_dir=Path("egresslens-output"),
     mode="docker",
-    image="ubuntu:24.04",
+    image="egresslens/base:latest",
     no_enrich=False,
 )
 
@@ -80,7 +80,7 @@ exit_code = watch_command(
 
 - Python 3.8+
 - Docker (for `--mode docker`)
-- `strace` (installed automatically in Docker containers)
+- Docker image with `strace` pre-installed (e.g. `egresslens/base:latest` from `./docker-build.sh`)
 
 ## Docker Image
 
@@ -100,7 +100,7 @@ Then use it with:
 egresslens watch --image egresslens/base:latest -- curl https://example.com
 ```
 
-By default, the CLI uses `ubuntu:24.04` and will install strace on each run (slower but works out of the box).
+The CLI defaults to `egresslens/base:latest`. Build it first with `./docker-build.sh`. You can override with `--image` (e.g. `--image ubuntu:24.04`), but the image must have `strace` installed.
 
 ## Security Note
 
