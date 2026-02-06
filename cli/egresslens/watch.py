@@ -42,12 +42,14 @@ def watch_command(
     # Record start time
     start_time = datetime.now()
 
-    # Run command in Docker with strace (docker-only)
+    # Run command in Docker with strace (docker-only). Also capture container logs.
+    logs_path = output_dir / "container.log"
     exit_code, error = run_docker_command(
         command=list(command),
         work_dir=cwd,
         image=image,
         strace_output_path=strace_path,
+        logs_output_path=logs_path,
     )
     if error:
         print(f"Warning: {error}", file=__import__("sys").stderr)
@@ -97,5 +99,14 @@ def watch_command(
     print(f"    - {metadata_path.relative_to(output_dir)} (metadata)", file=sys.stdout)
     if strace_path.exists() and strace_path.stat().st_size > 0:
         print(f"    - {strace_path.relative_to(output_dir)} (raw strace output)", file=sys.stdout)
+    if logs_path.exists() and logs_path.stat().st_size > 0:
+        print(f"    - {logs_path.relative_to(output_dir)} (container logs)", file=sys.stdout)
+    # Command stdout/stderr captured by strace wrapper
+    cmd_stdout = output_dir / "cmd_stdout"
+    cmd_stderr = output_dir / "cmd_stderr"
+    if cmd_stdout.exists() and cmd_stdout.stat().st_size > 0:
+        print(f"    - {cmd_stdout.relative_to(output_dir)} (command stdout)", file=sys.stdout)
+    if cmd_stderr.exists() and cmd_stderr.stat().st_size > 0:
+        print(f"    - {cmd_stderr.relative_to(output_dir)} (command stderr)", file=sys.stdout)
 
     return exit_code
