@@ -75,3 +75,6 @@ logs/
 # Misc
 Thumbs.db
 ehthumbs.db
+
+# EgressLens output
+egresslens-output/

@@ -1,0 +1,107 @@
+# EgressLens CLI
+
+Command-line tool for monitoring network egress by running commands in isolated Docker containers and capturing network syscalls using `strace`.
+
+## Installation
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Install in development mode:
+
+```bash
+pip install -e .
+```
+
+Or install from the project root:
+
+```bash
+pip install -e cli/
+```
+
+## Usage
+
+```bash
+egresslens watch -- <command>
+```
+
+### Options
+
+- `--out <path>`: Output directory (default: `egresslens-output/`)
+- `--mode docker|host`: Execution mode (default: `docker`)
+- `--image <name>`: Docker base image (default: `ubuntu:24.04`)
+- `--no-enrich`: Disable DNS enrichment (reverse lookups)
+
+### Examples
+
+```bash
+# Monitor a curl command
+egresslens watch -- curl https://example.com
+
+# Use custom output directory
+egresslens watch --out ./results -- curl https://example.com
+
+# Use a different Docker image
+egresslens watch --image alpine:latest -- wget https://example.com
+```
+
+## Output
+
+The CLI generates two files in the output directory:
+
+- `egress.jsonl`: JSONL file with network connection events
+- `run.json`: Metadata about the run (timestamps, exit code, counts, etc.)
+
+## Programmatic Usage
+
+You can also use `watch.py` as a Python module:
+
+```python
+from pathlib import Path
+from egresslens.watch import watch_command
+
+# Run a command and monitor network egress
+exit_code = watch_command(
+    command=["curl", "https://example.com"],
+    output_dir=Path("egresslens-output"),
+    mode="docker",
+    image="ubuntu:24.04",
+    no_enrich=False,
+)
+
+# The function returns the exit code from the executed command
+# Output files are written to the specified output_dir
+```
+
+## Requirements
+
+- Python 3.8+
+- Docker (for `--mode docker`)
+- `strace` (installed automatically in Docker containers)
+
+## Docker Image
+
+For better performance, you can build a custom Docker image with strace pre-installed:
+
+```bash
+# From the project root
+./docker-build.sh
+
+# Or manually
+docker build -t egresslens/base:latest .
+```
+
+Then use it with:
+
+```bash
+egresslens watch --image egresslens/base:latest -- curl https://example.com
+```
+
+By default, the CLI uses `ubuntu:24.04` and will install strace on each run (slower but works out of the box).
+
+## Security Note
+
+This tool requires elevated Docker capabilities (`CAP_SYS_PTRACE`) and relaxed seccomp settings to use `strace`. This reduces container isolation. See the main project README for security recommendations.
