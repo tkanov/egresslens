@@ -114,8 +114,6 @@ $ head -n 5 egresslens-output/egress.jsonl
 ```
 
 
-
-
 ## Step 6: Upload the JSONL in the UI
 
 Use the upload page (frontend app) to submit `egresslens-output/egress.jsonl`.
@@ -126,8 +124,6 @@ Use the upload page (frontend app) to submit `egresslens-output/egress.jsonl`.
 ## Step 7: View the results in the UI
 
 After upload, the report page shows the KPIs, timeline, and top destinations.
-
-Screenshot placeholder:
 
 ![Report view](images/report.png)
 

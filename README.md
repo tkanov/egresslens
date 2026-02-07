@@ -47,6 +47,9 @@ egresslens run-app ./sample_app --args "dns example.com"
 ```
 
 
+Report view:
+![Report view](docs/images/report.png)
+
 ---
 
 ## Security
