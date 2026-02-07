@@ -87,3 +87,4 @@ egresslens-output/
 
 # per-project venv
 sample_app/.venv/
+backend/egresslens.db
