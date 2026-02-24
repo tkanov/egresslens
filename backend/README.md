@@ -22,6 +22,30 @@ uvicorn app.main:app --reload --port 8000
 
 The API will be available at `http://localhost:8000`
 
+## Configuration
+
+The backend uses configurable thresholds for security flags calculation. Configuration can be set via:
+
+1. **config.yaml file** (recommended for persistent configuration):
+   ```yaml
+   flags:
+     high_dest_threshold: 50          # Unique IP:port pairs threshold
+     failure_threshold: 0.10          # Failure rate threshold (0.0-1.0)
+     usual_ports: [80, 443, 53, 22]  # Ports not considered "unusual"
+   ```
+
+2. **Environment variables** (highest priority, overrides config.yaml):
+   ```bash
+   FLAG_HIGH_DEST_THRESHOLD=50          # int
+   FLAG_FAILURE_THRESHOLD=0.10          # float
+   FLAG_USUAL_PORTS=80,443,53,22       # comma-separated ports
+   ```
+   
+   Example:
+   ```bash
+   FLAG_HIGH_DEST_THRESHOLD=100 uvicorn app.main:app --reload --port 8000
+   ```
+
 ## API Endpoints
 
 - `POST /api/reports/upload` - Upload JSONL file

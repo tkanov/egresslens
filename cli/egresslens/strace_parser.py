@@ -31,8 +31,8 @@ def parse_strace_line(line: str) -> Optional[dict]:
     Returns:
         Event dictionary or None if line doesn't match
     """
-    # Match lines with connect( and AF_INET (skip IPv6 for MVP)
-    if "connect(" not in line or "AF_INET" not in line:
+    # Filter for AF_INET only (IPv6/AF_INET6 not supported in current MVP - see docs/getting-started.md#limitations)
+    if "connect(" not in line or "sa_family=AF_INET" not in line:
         return None
 
     # Pattern: PID timestamp connect(...) = result [errno]
