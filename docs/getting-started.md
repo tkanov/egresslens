@@ -129,7 +129,7 @@ After upload, the report page shows the KPIs, timeline, and top destinations.
 
 ---
 
-## Limitations {#limitations}
+## Limitations
 
 ### IPv4 only
 
