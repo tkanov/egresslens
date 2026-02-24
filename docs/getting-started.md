@@ -127,3 +127,22 @@ After upload, the report page shows the KPIs, timeline, and top destinations.
 
 ![Report view](images/report.png)
 
+---
+
+## Limitations {#limitations}
+
+### IPv4 only
+
+The current MVP captures **IPv4 (AF_INET) connections only**. IPv6 (AF_INET6) connections are silently filtered out.
+
+- All events in `egress.jsonl` have `"family": "inet"` (IPv4)
+- IPv6 connections do not appear in the event logs
+- The `strace` parser in the CLI only recognizes the AF_INET socket family
+
+**Why**: IPv6 support requires:
+- Additional strace event parsing (AF_INET6 patterns)
+- Updated frontend/backend to display IPv6-specific formats (e.g., IPv6 address notation)
+- Testing across IPv6-only and dual-stack networks
+
+This limitation will be addressed in future versions. For now, EgressLens is suitable for monitoring IPv4-only applications and dual-stack apps that primarily use IPv4 for egress.
+
