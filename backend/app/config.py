@@ -52,16 +52,62 @@ def load_config() -> Settings:
                 config_dict["flags"].update(yaml_config["flags"])
     
     # Override with environment variables if present
-    if os.getenv("FLAG_HIGH_DEST_THRESHOLD"):
-        config_dict["flags"]["high_dest_threshold"] = int(os.getenv("FLAG_HIGH_DEST_THRESHOLD"))
+    env_high_dest = os.getenv("FLAG_HIGH_DEST_THRESHOLD")
+    if env_high_dest is not None and env_high_dest != "":
+        try:
+            config_dict["flags"]["high_dest_threshold"] = int(env_high_dest)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid configuration: FLAG_HIGH_DEST_THRESHOLD='{env_high_dest}' "
+                "must be an integer."
+            ) from exc
     
-    if os.getenv("FLAG_FAILURE_THRESHOLD"):
-        config_dict["flags"]["failure_threshold"] = float(os.getenv("FLAG_FAILURE_THRESHOLD"))
+    env_failure = os.getenv("FLAG_FAILURE_THRESHOLD")
+    if env_failure is not None and env_failure != "":
+        try:
+            failure_val = float(env_failure)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid configuration: FLAG_FAILURE_THRESHOLD='{env_failure}' "
+                "must be a floating-point number between 0.0 and 1.0."
+            ) from exc
+        if not (0.0 <= failure_val <= 1.0):
+            raise ValueError(
+                f"Invalid configuration: FLAG_FAILURE_THRESHOLD='{env_failure}' "
+                "must be between 0.0 and 1.0."
+            )
+        config_dict["flags"]["failure_threshold"] = failure_val
     
-    if os.getenv("FLAG_USUAL_PORTS"):
-        # Parse comma-separated port list
-        ports_str = os.getenv("FLAG_USUAL_PORTS")
-        config_dict["flags"]["usual_ports"] = [int(p.strip()) for p in ports_str.split(",")]
+    ports_str = os.getenv("FLAG_USUAL_PORTS")
+    if ports_str is not None and ports_str != "":
+        # Parse comma-separated port list; ignore empty tokens (e.g., from trailing commas)
+        ports: List[int] = []
+        for raw_token in ports_str.split(","):
+            token = raw_token.strip()
+            if not token:
+                # Skip empty entries to tolerate inputs like "80,443,"
+                continue
+            try:
+                port = int(token)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid configuration: FLAG_USUAL_PORTS='{ports_str}' contains "
+                    f"non-integer value '{token}'."
+                ) from exc
+            if not (1 <= port <= 65535):
+                raise ValueError(
+                    f"Invalid configuration: FLAG_USUAL_PORTS='{ports_str}' contains "
+                    f"out-of-range port '{port}'. Ports must be between 1 and 65535."
+                )
+            ports.append(port)
+        
+        if not ports:
+            raise ValueError(
+                f"Invalid configuration: FLAG_USUAL_PORTS='{ports_str}' did not contain "
+                "any valid port numbers."
+            )
+        
+        config_dict["flags"]["usual_ports"] = ports
     
     return Settings(**config_dict)
 
