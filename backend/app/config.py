@@ -2,20 +2,29 @@
 import os
 import yaml
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List
 
 
 class FlagThresholds(BaseModel):
     """Configuration for security flags calculation."""
-    high_dest_threshold: int = 50
-    """Threshold for number of unique destination IP:port pairs to trigger 'High unique destinations' flag."""
+    high_dest_threshold: int = Field(
+        50,
+        description="Threshold for number of unique destination IP:port pairs to "
+        "trigger 'High unique destinations' flag.",
+    )
     
-    failure_threshold: float = 0.10
-    """Threshold for failure rate (0.0-1.0) to trigger 'Elevated failure rate' flag."""
+    failure_threshold: float = Field(
+        0.10,
+        description="Threshold for failure rate (0.0-1.0) to trigger 'Elevated failure "
+        "rate' flag.",
+    )
     
-    usual_ports: List[int] = [80, 443, 53, 22]
-    """List of ports considered 'usual'. Connections to other ports trigger 'Unusual ports' flag."""
+    usual_ports: List[int] = Field(
+        [80, 443, 53, 22],
+        description="List of ports considered 'usual'. Connections to other ports "
+        "trigger 'Unusual ports' flag.",
+    )
 
 
 class Settings(BaseModel):
