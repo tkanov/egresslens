@@ -15,7 +15,6 @@ class EventSchema(BaseModel):
     dst_port: int
     result: str
     errno: Optional[str] = None
-    resolved_domain: Optional[str] = None
     cmd: Optional[str] = None
     container_image: Optional[str] = None
     run_id: Optional[str] = None

@@ -15,7 +15,6 @@ export interface Event {
   dst_port: number;
   result: string;
   errno?: string | null;
-  resolved_domain?: string | null;
   cmd?: string | null;
   container_image?: string | null;
   run_id?: string | null;
@@ -32,6 +31,7 @@ export interface TopDestination {
   dst_port: number;
   proto?: string | null;
   count: number;
+  // domain field reserved for future DNS resolution feature
   domain?: string | null;
 }
 

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import init_db, get_db
 from app.models import Report
 from app.schemas import EventSchema, ReportUploadResponse, ReportResponse
+from app.config import settings
 
 app = FastAPI(
     title="EgressLens API",
@@ -41,10 +42,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Constants for flags calculation
-HIGH_DEST_THRESHOLD = 50
-FAILURE_THRESHOLD = 0.10
-USUAL_PORTS = {80, 443, 53, 22}
+# Load configuration (including flag thresholds)
+# These can be overridden via config.yaml or environment variables
+HIGH_DEST_THRESHOLD = settings.flags.high_dest_threshold
+FAILURE_THRESHOLD = settings.flags.failure_threshold
+USUAL_PORTS = set(settings.flags.usual_ports)
 
 
 @app.on_event("startup")
@@ -97,10 +99,6 @@ def compute_aggregates(events: List[EventSchema]) -> dict:
             "dst_port": port,
             "proto": dest_protocols.get((ip, port), "unknown"),
             "count": count,
-            "domain": next(
-                (e.resolved_domain for e in events if e.dst_ip == ip and e.dst_port == port and e.resolved_domain),
-                None
-            ),
         }
         for (ip, port), count in dest_counter.most_common(50)
     ]
@@ -117,27 +115,35 @@ def compute_aggregates(events: List[EventSchema]) -> dict:
 
 
 def calculate_flags(events: List[EventSchema], summary: dict) -> List[dict]:
-    """Calculate flags based on events and summary statistics."""
+    """Calculate flags based on events and summary statistics.
+    
+    Uses configurable thresholds from config (environment/YAML).
+    """
     flags = []
+    
+    # Get current threshold values from config
+    high_dest_threshold = settings.flags.high_dest_threshold
+    failure_threshold = settings.flags.failure_threshold
+    usual_ports = set(settings.flags.usual_ports)
 
     # Flag 1: High unique destinations
-    if summary.get("unique_destinations", 0) > HIGH_DEST_THRESHOLD:
+    if summary.get("unique_destinations", 0) > high_dest_threshold:
         flags.append({
             "name": "High unique destinations",
-            "description": f"Found {summary['unique_destinations']} unique destination IP:port pairs (threshold: {HIGH_DEST_THRESHOLD})",
+            "description": f"Found {summary['unique_destinations']} unique destination IP:port pairs (threshold: {high_dest_threshold})",
             "severity": "medium",
         })
 
     # Flag 2: High failure rate
-    if summary.get("failure_rate", 0.0) > FAILURE_THRESHOLD:
+    if summary.get("failure_rate", 0.0) > failure_threshold:
         flags.append({
             "name": "Elevated failure rate",
-            "description": f"Failure rate is {summary['failure_rate']:.1%} (threshold: {FAILURE_THRESHOLD:.1%})",
+            "description": f"Failure rate is {summary['failure_rate']:.1%} (threshold: {failure_threshold:.1%})",
             "severity": "medium",
         })
 
     # Flag 3: Unusual ports
-    unusual_ports = set(e.dst_port for e in events if e.dst_port not in USUAL_PORTS)
+    unusual_ports = set(e.dst_port for e in events if e.dst_port not in usual_ports)
     if unusual_ports:
         flags.append({
             "name": "Unusual ports",
@@ -215,12 +221,11 @@ def get_report(report_id: str, db: Session = Depends(get_db)):
     # Convert top_events JSON to EventSchema objects
     top_events = [EventSchema(**event) for event in report.top_events]
     
-    # Recalculate flags from stored events to ensure they use the latest logic
-    # We need all events, not just top_events, so we'll use the stored events
-    # For now, we'll recalculate from top_events (which may be a subset)
-    # In a production system, you'd want to store all events or recalculate from the original file
-    all_events = [EventSchema(**event) for event in report.top_events]
-    flags = calculate_flags(all_events, report.summary)
+    # Return flags that were computed during upload from ALL events.
+    # Flags are calculated once on upload and stored with the report.
+    # This ensures flags are consistent and accurate regardless of how many times the report is retrieved.
+    # (Previously, flags were recalculated from top_events only, which could give incorrect results for large datasets)
+    flags = report.flags
 
     return ReportResponse(
         id=report.id,
@@ -335,13 +340,12 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
         md_lines.extend([
             "## Top Events",
             "",
-            "| Timestamp | PID | IP | Port | Result | Domain |",
-            "|-----------|-----|----|----|--------|--------|",
+            "| Timestamp | PID | IP | Port | Result |",
+            "|-----------|-----|----|----|--------|",
         ])
         for event in top_events[:50]:  # Show top 50 events
-            domain = event.resolved_domain or "-"
             md_lines.append(
-                f"| {event.ts} | {event.pid} | {event.dst_ip} | {event.dst_port} | {event.result} | {domain} |"
+                f"| {event.ts} | {event.pid} | {event.dst_ip} | {event.dst_port} | {event.result} |"
             )
         md_lines.append("")
 

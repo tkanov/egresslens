@@ -1,0 +1,22 @@
+# Configuration for EgressLens Backend
+# These values define thresholds for security flags calculation.
+# Can be overridden by environment variables:
+# - FLAG_HIGH_DEST_THRESHOLD: number of unique destination IP:port pairs threshold
+# - FLAG_FAILURE_THRESHOLD: failure rate threshold (0.0-1.0)
+# - FLAG_USUAL_PORTS: comma-separated list of usual ports (e.g., "80,443,53,22")
+
+flags:
+  # Trigger "High unique destinations" flag when unique IP:port pairs exceed this threshold
+  high_dest_threshold: 50
+  
+  # Trigger "Elevated failure rate" flag when failure rate exceeds this threshold (0.0-1.0)
+  # Example: 0.10 means 10% failure rate
+  failure_threshold: 0.10
+  
+  # List of ports considered "usual". Connections to other ports trigger "Unusual ports" flag.
+  # Example: 80 (HTTP), 443 (HTTPS), 53 (DNS), 22 (SSH)
+  usual_ports:
+    - 80
+    - 443
+    - 53
+    - 22
