@@ -82,7 +82,7 @@ The CLI runs containers with:
 
 ## Current Limitations
 
-- **IPv4 only**: The MVP captures IPv4 (AF_INET) connections only. IPv6 (AF_INET6) connections are silently filtered out. See [getting-started.md#limitations](docs/getting-started.md#limitations).
+- **IPv4 only**: The MVP captures IPv4 (AF_INET) connections only. IPv6 (AF_INET6) connections are silently filtered out. See [getting-started.md#limitations](docs/getting-started.md#limitations-limitations).
 
 ---
 
