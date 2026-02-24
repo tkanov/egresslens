@@ -120,30 +120,25 @@ def calculate_flags(events: List[EventSchema], summary: dict) -> List[dict]:
     Uses configurable thresholds from config (environment/YAML).
     """
     flags = []
-    
-    # Get current threshold values from config
-    high_dest_threshold = settings.flags.high_dest_threshold
-    failure_threshold = settings.flags.failure_threshold
-    usual_ports = set(settings.flags.usual_ports)
 
     # Flag 1: High unique destinations
-    if summary.get("unique_destinations", 0) > high_dest_threshold:
+    if summary.get("unique_destinations", 0) > HIGH_DEST_THRESHOLD:
         flags.append({
             "name": "High unique destinations",
-            "description": f"Found {summary['unique_destinations']} unique destination IP:port pairs (threshold: {high_dest_threshold})",
+            "description": f"Found {summary['unique_destinations']} unique destination IP:port pairs (threshold: {HIGH_DEST_THRESHOLD})",
             "severity": "medium",
         })
 
     # Flag 2: High failure rate
-    if summary.get("failure_rate", 0.0) > failure_threshold:
+    if summary.get("failure_rate", 0.0) > FAILURE_THRESHOLD:
         flags.append({
             "name": "Elevated failure rate",
-            "description": f"Failure rate is {summary['failure_rate']:.1%} (threshold: {failure_threshold:.1%})",
+            "description": f"Failure rate is {summary['failure_rate']:.1%} (threshold: {FAILURE_THRESHOLD:.1%})",
             "severity": "medium",
         })
 
     # Flag 3: Unusual ports
-    unusual_ports = set(e.dst_port for e in events if e.dst_port not in usual_ports)
+    unusual_ports = set(e.dst_port for e in events if e.dst_port not in USUAL_PORTS)
     if unusual_ports:
         flags.append({
             "name": "Unusual ports",
