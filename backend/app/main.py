@@ -183,8 +183,8 @@ async def upload_report(
     # Compute aggregates
     summary = compute_aggregates(events)
     
-    # Get top events (first 100)
-    top_events = events[:100]
+    # Store all parsed events so detail views and exports stay consistent with the summary.
+    top_events = events
     
     # Calculate flags
     flags = calculate_flags(events, summary)
@@ -213,7 +213,7 @@ def get_report(report_id: str, db: Session = Depends(get_db)):
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    # Convert top_events JSON to EventSchema objects
+    # Convert stored event JSON to EventSchema objects
     top_events = [EventSchema(**event) for event in report.top_events]
     
     # Return flags that were computed during upload from ALL events.
@@ -243,7 +243,7 @@ def get_report_events(
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    # Convert top_events JSON to EventSchema objects
+    # Convert stored event JSON to EventSchema objects
     events = [EventSchema(**event) for event in report.top_events]
 
     # Apply limit if provided
@@ -265,7 +265,7 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    # Convert top_events JSON to EventSchema objects
+    # Convert stored event JSON to EventSchema objects
     top_events = [EventSchema(**event) for event in report.top_events]
 
     # Generate markdown
