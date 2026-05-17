@@ -38,6 +38,8 @@ The frontend will run on `http://localhost:5173`.
 
 The frontend connects to the FastAPI backend running on `http://localhost:8000`. Make sure the backend is running before starting the frontend.
 
+On the upload page, choose `egress.jsonl` from the CLI output directory. Add `run.json` as optional metadata when you want the report to show command, image, exit code, and timing.
+
 ## Building
 
 ```bash

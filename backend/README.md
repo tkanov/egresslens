@@ -48,7 +48,7 @@ The backend uses configurable thresholds for security flags calculation. Configu
 
 ## API Endpoints
 
-- `POST /api/reports/upload` - Upload JSONL file
+- `POST /api/reports/upload` - Upload JSONL file, with optional `run.json` as `metadata_file`
 - `GET /api/reports/{id}` - Get report by ID
 - `GET /api/reports/{id}/events` - Get events for a report
 - `GET /api/reports/{id}/export.md` - Export report as markdown

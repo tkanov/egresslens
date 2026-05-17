@@ -128,6 +128,8 @@ $ head -n 5 egresslens-output/egress.jsonl
 
 Use the upload page (frontend app) to submit `egresslens-output/egress.jsonl`.
 
+Optionally add `egresslens-output/run.json` in the run metadata picker so the report can show command, image, exit code, and timing.
+
 
 ![Upload screen](images/ui-frontend.png)
 

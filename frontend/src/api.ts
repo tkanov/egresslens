@@ -105,9 +105,15 @@ async function handleResponse<T>(response: Response): Promise<T> {
 /**
  * Upload a JSONL file and create a report
  */
-export async function uploadReport(file: File): Promise<ReportUploadResponse> {
+export async function uploadReport(
+  file: File,
+  metadataFile?: File | null
+): Promise<ReportUploadResponse> {
   const formData = new FormData();
   formData.append('file', file);
+  if (metadataFile) {
+    formData.append('metadata_file', metadataFile);
+  }
 
   const response = await fetch(`${API_BASE_URL}/api/reports/upload`, {
     method: 'POST',

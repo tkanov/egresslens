@@ -11,24 +11,26 @@ const ACCEPT = '.jsonl,application/jsonl,application/x-ndjson'
 export function UploadPage() {
   const navigate = useNavigate()
   const [file, setFile] = useState<File | null>(null)
+  const [metadataFile, setMetadataFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const metadataInputRef = useRef<HTMLInputElement>(null)
 
   const handleUpload = useCallback(async () => {
     if (!file) return
     setError(null)
     setUploading(true)
     try {
-      const { report_id } = await uploadReport(file)
+      const { report_id } = await uploadReport(file, metadataFile)
       navigate(`/reports/${report_id}`)
     } catch (e) {
       setError(e instanceof ApiError ? e.detail ?? e.message : String(e))
     } finally {
       setUploading(false)
     }
-  }, [file, navigate])
+  }, [file, metadataFile, navigate])
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -56,6 +58,18 @@ export function UploadPage() {
     const f = e.target.files?.[0]
     if (f) {
       setFile(f)
+      setError(null)
+    }
+  }, [])
+
+  const onMetadataFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (f) {
+      if (f.name !== 'run.json' && !f.name.endsWith('.json')) {
+        setError('Please choose run.json or another JSON metadata file.')
+        return
+      }
+      setMetadataFile(f)
       setError(null)
     }
   }, [])
@@ -104,6 +118,43 @@ export function UploadPage() {
               >
                 Choose file
               </Button>
+            </div>
+
+            <div className="rounded-lg border p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium">Run metadata</p>
+                  <p className="text-sm text-muted-foreground">
+                    {metadataFile ? metadataFile.name : 'Optional: add run.json from the same output directory.'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {metadataFile && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setMetadataFile(null)}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => metadataInputRef.current?.click()}
+                  >
+                    Choose run.json
+                  </Button>
+                </div>
+              </div>
+              <input
+                ref={metadataInputRef}
+                type="file"
+                accept=".json,application/json"
+                onChange={onMetadataFileChange}
+                className="hidden"
+                aria-hidden
+              />
             </div>
 
             {error && (

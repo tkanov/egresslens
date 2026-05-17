@@ -152,6 +152,7 @@ def calculate_flags(events: List[EventSchema], summary: dict) -> List[dict]:
 @app.post("/api/reports/upload", response_model=ReportUploadResponse, tags=["reports"])
 async def upload_report(
     file: UploadFile = File(...),
+    metadata_file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
 ):
     """Upload and process a JSONL file to create a report."""
@@ -180,6 +181,20 @@ async def upload_report(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error reading file: {str(e)}")
 
+    run_metadata = {}
+    if metadata_file is not None:
+        try:
+            metadata_content = await metadata_file.read()
+            if metadata_content:
+                metadata_data = json.loads(metadata_content.decode("utf-8"))
+                if not isinstance(metadata_data, dict):
+                    raise ValueError("run metadata must be a JSON object")
+                run_metadata = metadata_data
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="run.json must be UTF-8 encoded")
+        except (json.JSONDecodeError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid run.json: {str(e)}")
+
     # Compute aggregates
     summary = compute_aggregates(events)
     
@@ -193,7 +208,7 @@ async def upload_report(
     report_id = str(uuid.uuid4())
     report = Report(
         id=report_id,
-        run_metadata={},  # Could be enhanced to accept run.json separately
+        run_metadata=run_metadata,
         summary=summary,
         top_events=[event.model_dump() for event in top_events],
         flags=flags,
@@ -290,6 +305,24 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
         f"- **Failure Rate:** {summary.get('failure_rate', 0.0):.1%}",
         "",
     ])
+
+    metadata = report.run_metadata or {}
+    if metadata:
+        command = metadata.get("command")
+        command_text = " ".join(command) if isinstance(command, list) else str(command or "-")
+        md_lines.extend([
+            "## Run Details",
+            "",
+            f"- **Run ID:** `{metadata.get('run_id', '-')}`",
+            f"- **Command:** `{command_text}`",
+            f"- **Exit Code:** {metadata.get('exit_code', '-')}",
+            f"- **Mode:** {metadata.get('mode', '-')}",
+            f"- **Image:** `{metadata.get('image', '-')}`",
+            f"- **Started:** {metadata.get('start_time', '-')}",
+            f"- **Finished:** {metadata.get('end_time', '-')}",
+            f"- **Working Directory:** `{metadata.get('cwd', '-')}`",
+            "",
+        ])
 
     # Flags
     if report.flags:

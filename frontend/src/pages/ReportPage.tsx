@@ -7,6 +7,7 @@ import { KPICards } from '@/components/KPICards'
 import { TopDestinations } from '@/components/TopDestinations'
 import { TimelineChart } from '@/components/TimelineChart'
 import { FlagsPanel } from '@/components/FlagsPanel'
+import { RunDetails } from '@/components/RunDetails'
 
 export function ReportPage() {
   const { id } = useParams<{ id: string }>()
@@ -79,6 +80,7 @@ export function ReportPage() {
         </div>
 
         <KPICards summary={report.summary} />
+        <RunDetails metadata={report.metadata} />
         <TopDestinations destinations={report.summary.top_destinations} />
         <TimelineChart events={report.top_events} />
         <FlagsPanel flags={report.flags} />
