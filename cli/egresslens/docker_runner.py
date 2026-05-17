@@ -7,10 +7,13 @@ from typing import Optional
 
 try:
     import docker
-    from docker.errors import DockerException
+    from docker.errors import DockerException, ImageNotFound
     DOCKER_SDK_AVAILABLE = True
 except ImportError:
     DOCKER_SDK_AVAILABLE = False
+
+
+DEFAULT_IMAGE = "egresslens/base:latest"
 
 
 class DockerRunner:
@@ -53,6 +56,36 @@ class DockerRunner:
         if not strace_output_path.exists():
             strace_output_path.touch()
 
+    def _default_image_hint(self) -> str:
+        return (
+            f"Docker image '{DEFAULT_IMAGE}' was not found locally. "
+            "Build it from the repository root first: docker build -t egresslens/base:latest ."
+        )
+
+    def _ensure_default_image_available_sdk(self) -> Optional[str]:
+        if self.image != DEFAULT_IMAGE or not self.client:
+            return None
+        try:
+            self.client.images.get(self.image)
+            return None
+        except ImageNotFound:
+            return self._default_image_hint()
+        except Exception as e:
+            return f"Failed to inspect Docker image '{self.image}': {e}"
+
+    def _ensure_default_image_available_subprocess(self) -> Optional[str]:
+        if self.image != DEFAULT_IMAGE:
+            return None
+        inspect_result = subprocess.run(
+            ["docker", "image", "inspect", self.image],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if inspect_result.returncode == 0:
+            return None
+        return self._default_image_hint()
+
     def run_with_strace(
         self,
         command: list[str],
@@ -84,6 +117,9 @@ class DockerRunner:
         try:
             # Prepare output dir and strace command
             self._ensure_output_parent(strace_output_path)
+            image_error = self._ensure_default_image_available_sdk()
+            if image_error:
+                return 1, image_error
             _, strace_cmd = self._build_strace_cmd(command)
 
             container = self.client.containers.run(
@@ -137,6 +173,9 @@ class DockerRunner:
         try:
             # Prepare output dir and strace command
             self._ensure_output_parent(strace_output_path)
+            image_error = self._ensure_default_image_available_subprocess()
+            if image_error:
+                return 1, image_error
             container_strace_path, strace_cmd = self._build_strace_cmd(command)
 
             # Run container without --rm so we can copy files
@@ -264,4 +303,3 @@ def run_python_app(
     # Use the standard Docker runner
     runner = DockerRunner(image=image)
     return runner.run_with_strace(command, app_path, strace_output_path)
-

@@ -43,6 +43,7 @@ Full walkthrough: [Getting started guide](docs/getting-started.md)
 Trace a Python app quickly:
 
 ```bash
+docker build -t egresslens/base:latest .
 egresslens run-app ./sample_app --args "dns example.com"
 ```
 
@@ -138,4 +139,3 @@ The CLI defaults to `egresslens/base:latest`. You can override with `--image` (e
 `run-app` discovers entry points, installs dependencies if `requirements.txt` is present, and traces network activity.
 
 **Entry points:** `__main__.py`, `main.py`, or `app.py`
-

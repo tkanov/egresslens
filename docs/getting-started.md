@@ -39,7 +39,17 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Step 4: Run a CLI capture
+## Step 4: Build the tracing image
+
+From the repo root:
+
+```bash
+docker build -t egresslens/base:latest .
+```
+
+The CLI defaults to this local image.
+
+## Step 5: Run a CLI capture
 
 From the repo root:
 
@@ -65,7 +75,7 @@ Example:
 Note: here we're using the sample app included in this repo.
 
 
-## Step 5: Review the generated files
+## Step 6: Review the generated files
 
 ![egresslens-output](images/files-outputs.png)
 
@@ -114,14 +124,14 @@ $ head -n 5 egresslens-output/egress.jsonl
 ```
 
 
-## Step 6: Upload the JSONL in the UI
+## Step 7: Upload the JSONL in the UI
 
 Use the upload page (frontend app) to submit `egresslens-output/egress.jsonl`.
 
 
 ![Upload screen](images/ui-frontend.png)
 
-## Step 7: View the results in the UI
+## Step 8: View the results in the UI
 
 After upload, the report page shows the KPIs, timeline, and top destinations.
 
@@ -145,4 +155,3 @@ The current MVP captures **IPv4 (AF_INET) connections only**. IPv6 (AF_INET6) co
 - Testing across IPv6-only and dual-stack networks
 
 This limitation will be addressed in future versions. For now, EgressLens is suitable for monitoring IPv4-only applications and dual-stack apps that primarily use IPv4 for egress.
-

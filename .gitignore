@@ -53,6 +53,8 @@ dist/
 build/
 out/
 lib/
+!frontend/src/lib/
+!frontend/src/lib/*.ts
 .next/
 .next/cache/
 .vite/
