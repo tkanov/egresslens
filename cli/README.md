@@ -43,6 +43,22 @@ egresslens run-app ./my_python_app --args "arg1 arg2"
 - `egress.jsonl` — network connection events
 - `run.json` — run metadata (timestamps, exit code, counts)
 
+## Testing
+
+Run the parser unit tests:
+
+```bash
+python3 cli/test_strace_parser.py
+```
+
+Run the real strace integration harness:
+
+```bash
+python3 cli/test_strace_integration.py
+```
+
+The integration harness generates a temporary Python program, traces loopback-only TCP and UDP sockets with `strace`, parses the resulting trace, and verifies that both protocols are emitted correctly. It skips cleanly if `strace` is not installed.
+
 ## Docker image
 
 Build an image with strace for better performance:
