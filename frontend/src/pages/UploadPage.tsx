@@ -12,25 +12,27 @@ export function UploadPage() {
   const navigate = useNavigate()
   const [file, setFile] = useState<File | null>(null)
   const [metadataFile, setMetadataFile] = useState<File | null>(null)
+  const [straceFile, setStraceFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const metadataInputRef = useRef<HTMLInputElement>(null)
+  const straceInputRef = useRef<HTMLInputElement>(null)
 
   const handleUpload = useCallback(async () => {
     if (!file) return
     setError(null)
     setUploading(true)
     try {
-      const { report_id } = await uploadReport(file, metadataFile)
+      const { report_id } = await uploadReport(file, metadataFile, straceFile)
       navigate(`/reports/${report_id}`)
     } catch (e) {
       setError(e instanceof ApiError ? e.detail ?? e.message : String(e))
     } finally {
       setUploading(false)
     }
-  }, [file, metadataFile, navigate])
+  }, [file, metadataFile, straceFile, navigate])
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -70,6 +72,18 @@ export function UploadPage() {
         return
       }
       setMetadataFile(f)
+      setError(null)
+    }
+  }, [])
+
+  const onStraceFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (f) {
+      if (f.name !== 'egress.strace' && !f.name.endsWith('.strace')) {
+        setError('Please choose egress.strace or another .strace file.')
+        return
+      }
+      setStraceFile(f)
       setError(null)
     }
   }, [])
@@ -152,6 +166,43 @@ export function UploadPage() {
                 type="file"
                 accept=".json,application/json"
                 onChange={onMetadataFileChange}
+                className="hidden"
+                aria-hidden
+              />
+            </div>
+
+            <div className="rounded-lg border p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium">Passive DNS trace</p>
+                  <p className="text-sm text-muted-foreground">
+                    {straceFile ? straceFile.name : 'Optional: add egress.strace to enrich public IPs with domains.'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {straceFile && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setStraceFile(null)}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => straceInputRef.current?.click()}
+                  >
+                    Choose egress.strace
+                  </Button>
+                </div>
+              </div>
+              <input
+                ref={straceInputRef}
+                type="file"
+                accept=".strace,text/plain"
+                onChange={onStraceFileChange}
                 className="hidden"
                 aria-hidden
               />

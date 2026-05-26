@@ -18,6 +18,8 @@ export interface Event {
   cmd?: string | null;
   container_image?: string | null;
   run_id?: string | null;
+  domain?: string | null;
+  domain_source?: string | null;
 }
 
 export interface Flag {
@@ -26,13 +28,28 @@ export interface Flag {
   severity: 'low' | 'medium' | 'high';
 }
 
+export interface DomainCandidate {
+  domain: string;
+  source: 'passive_dns' | 'reverse_dns' | string;
+  count: number;
+}
+
 export interface TopDestination {
   dst_ip: string;
   dst_port: number;
   proto?: string | null;
   count: number;
-  // domain field reserved for future DNS resolution feature
   domain?: string | null;
+  domain_source?: 'passive_dns' | 'reverse_dns' | string | null;
+  domains?: DomainCandidate[];
+}
+
+export interface EnrichmentSummary {
+  passive_matches: number;
+  reverse_matches: number;
+  unresolved_ips: number;
+  skipped_reverse_lookups: number;
+  lookup_errors: number;
 }
 
 export interface ReportSummary {
@@ -43,6 +60,7 @@ export interface ReportSummary {
   failures: number;
   failure_rate: number;
   top_destinations: TopDestination[];
+  enrichment?: EnrichmentSummary;
 }
 
 export interface ReportUploadResponse {
@@ -107,12 +125,16 @@ async function handleResponse<T>(response: Response): Promise<T> {
  */
 export async function uploadReport(
   file: File,
-  metadataFile?: File | null
+  metadataFile?: File | null,
+  straceFile?: File | null
 ): Promise<ReportUploadResponse> {
   const formData = new FormData();
   formData.append('file', file);
   if (metadataFile) {
     formData.append('metadata_file', metadataFile);
+  }
+  if (straceFile) {
+    formData.append('strace_file', straceFile);
   }
 
   const response = await fetch(`${API_BASE_URL}/api/reports/upload`, {

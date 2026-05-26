@@ -20,3 +20,13 @@ flags:
     - 443
     - 53
     - 22
+
+
+enrichment:
+  # Enable backend-time domain enrichment for uploaded reports.
+  enabled: true
+
+  # Use bounded reverse DNS fallback for public IPs not found in passive DNS.
+  reverse_dns_enabled: true
+  reverse_dns_timeout_seconds: 0.5
+  reverse_dns_max_ips: 100

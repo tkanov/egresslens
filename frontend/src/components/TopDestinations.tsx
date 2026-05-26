@@ -67,6 +67,38 @@ function PortDisplay({ port, proto }: { port: number; proto?: string | null }) {
   )
 }
 
+
+function formatDomainSource(source?: string | null) {
+  if (source === 'passive_dns') return 'passive DNS'
+  if (source === 'reverse_dns') return 'reverse DNS'
+  return source ?? null
+}
+
+function DomainDisplay({ destination }: { destination: TopDestination }) {
+  if (!destination.domain) {
+    return <span className="text-muted-foreground">—</span>
+  }
+
+  const primaryCandidate = destination.domains?.find(
+    (candidate) => candidate.domain === destination.domain && candidate.source === destination.domain_source
+  )
+  const source = formatDomainSource(destination.domain_source)
+  const extraCount = Math.max((destination.domains?.length ?? 0) - 1, 0)
+
+  return (
+    <div className="min-w-0">
+      <div className="truncate font-medium text-foreground" title={destination.domain}>
+        {destination.domain}
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {[source, primaryCandidate ? `${primaryCandidate.count} hit${primaryCandidate.count === 1 ? '' : 's'}` : null, extraCount > 0 ? `+${extraCount}` : null]
+          .filter(Boolean)
+          .join(' · ')}
+      </div>
+    </div>
+  )
+}
+
 export function TopDestinations({ destinations }: TopDestinationsProps) {
   return (
     <Card>
@@ -111,8 +143,8 @@ export function TopDestinations({ destinations }: TopDestinationsProps) {
                     <PortDisplay port={d.dst_port} proto={d.proto} />
                   </TableCell>
                   <TableCell>{d.count}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {d.domain ?? '—'}
+                  <TableCell className="max-w-[280px]">
+                    <DomainDisplay destination={d} />
                   </TableCell>
                 </TableRow>
               ))

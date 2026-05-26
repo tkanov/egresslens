@@ -18,6 +18,8 @@ class EventSchema(BaseModel):
     cmd: Optional[str] = None
     container_image: Optional[str] = None
     run_id: Optional[str] = None
+    domain: Optional[str] = None
+    domain_source: Optional[str] = None
 
 
 class ReportCreate(BaseModel):

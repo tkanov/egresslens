@@ -11,6 +11,12 @@ from app.database import init_db, get_db
 from app.models import Report
 from app.schemas import EventSchema, ReportUploadResponse, ReportResponse
 from app.config import settings
+from app.enrichment import (
+    DomainCandidate,
+    choose_primary_domain,
+    empty_enrichment_summary,
+    enrich_events,
+)
 
 app = FastAPI(
     title="EgressLens API",
@@ -61,8 +67,12 @@ def health_check():
     return {"status": "ok"}
 
 
-def compute_aggregates(events: List[EventSchema]) -> dict:
+def compute_aggregates(
+    events: List[EventSchema],
+    domain_candidates: Optional[dict] = None,
+) -> dict:
     """Compute aggregated statistics from events."""
+    domain_candidates = domain_candidates or {}
     if not events:
         return {
             "total_events": 0,
@@ -81,27 +91,58 @@ def compute_aggregates(events: List[EventSchema]) -> dict:
     failures = sum(1 for e in events if e.result != "ok")
     failure_rate = failures / total_events if total_events > 0 else 0.0
 
-    # Count destinations
     dest_counter = Counter((e.dst_ip, e.dst_port) for e in events)
-    
-    # Build protocol mapping for each destination (most common protocol)
+
     dest_protocols: dict[tuple[str, int], str] = {}
     for e in events:
         key = (e.dst_ip, e.dst_port)
         if key not in dest_protocols:
-            # Find most common protocol for this destination
             protocols = [ev.proto for ev in events if ev.dst_ip == e.dst_ip and ev.dst_port == e.dst_port]
             dest_protocols[key] = Counter(protocols).most_common(1)[0][0]
-    
-    top_destinations = [
-        {
+
+    top_destinations = []
+    for (ip, port), count in dest_counter.most_common(50):
+        candidates = list(domain_candidates.get(ip, []))
+        if not candidates:
+            event_domain_counts = Counter(
+                (event.domain, event.domain_source)
+                for event in events
+                if event.dst_ip == ip and event.domain
+            )
+            candidates = [
+                DomainCandidate(
+                    domain=domain,
+                    source=source,
+                    count=candidate_count,
+                )
+                for (domain, source), candidate_count in event_domain_counts.items()
+                if source
+            ]
+
+        primary = choose_primary_domain(candidates) if candidates else None
+        top_destinations.append({
             "dst_ip": ip,
             "dst_port": port,
             "proto": dest_protocols.get((ip, port), "unknown"),
             "count": count,
-        }
-        for (ip, port), count in dest_counter.most_common(50)
-    ]
+            "domain": primary.domain if primary else None,
+            "domain_source": primary.source if primary else None,
+            "domains": [
+                {
+                    "domain": candidate.domain,
+                    "source": candidate.source,
+                    "count": candidate.count,
+                }
+                for candidate in sorted(
+                    candidates,
+                    key=lambda candidate: (
+                        0 if candidate.source == "passive_dns" else 1,
+                        -candidate.count,
+                        candidate.domain,
+                    ),
+                )
+            ],
+        })
 
     return {
         "total_events": total_events,
@@ -153,6 +194,7 @@ def calculate_flags(events: List[EventSchema], summary: dict) -> List[dict]:
 async def upload_report(
     file: UploadFile = File(...),
     metadata_file: Optional[UploadFile] = File(None),
+    strace_file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
 ):
     """Upload and process a JSONL file to create a report."""
@@ -195,8 +237,31 @@ async def upload_report(
         except (json.JSONDecodeError, ValueError) as e:
             raise HTTPException(status_code=400, detail=f"Invalid run.json: {str(e)}")
 
+    strace_text = ""
+    if strace_file is not None:
+        try:
+            strace_content = await strace_file.read()
+            strace_text = strace_content.decode("utf-8", errors="ignore")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error reading egress.strace: {str(e)}")
+
+    if settings.enrichment.enabled:
+        enrichment = enrich_events(
+            events,
+            strace_text,
+            reverse_dns_enabled=settings.enrichment.reverse_dns_enabled,
+            reverse_dns_timeout_seconds=settings.enrichment.reverse_dns_timeout_seconds,
+            reverse_dns_max_ips=settings.enrichment.reverse_dns_max_ips,
+        )
+    else:
+        enrichment = None
+
     # Compute aggregates
-    summary = compute_aggregates(events)
+    summary = compute_aggregates(
+        events,
+        enrichment.domain_candidates if enrichment else {},
+    )
+    summary["enrichment"] = enrichment.summary() if enrichment else empty_enrichment_summary()
     
     # Store all parsed events so detail views and exports stay consistent with the summary.
     top_events = events
@@ -306,6 +371,19 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
         "",
     ])
 
+    enrichment_summary = summary.get("enrichment") or {}
+    if enrichment_summary:
+        md_lines.extend([
+            "## Enrichment",
+            "",
+            f"- **Passive DNS Matches:** {enrichment_summary.get('passive_matches', 0)}",
+            f"- **Reverse DNS Matches:** {enrichment_summary.get('reverse_matches', 0)}",
+            f"- **Unresolved IPs:** {enrichment_summary.get('unresolved_ips', 0)}",
+            f"- **Skipped Reverse Lookups:** {enrichment_summary.get('skipped_reverse_lookups', 0)}",
+            f"- **Lookup Errors:** {enrichment_summary.get('lookup_errors', 0)}",
+            "",
+        ])
+
     metadata = report.run_metadata or {}
     if metadata:
         command = metadata.get("command")
@@ -352,14 +430,15 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
         md_lines.extend([
             "## Top Destinations",
             "",
-            "| IP | Port | Protocol | Count | Domain |",
-            "|----|------|----------|-------|--------|",
+            "| IP | Port | Protocol | Count | Domain | Source |",
+            "|----|------|----------|-------|--------|--------|",
         ])
         for dest in top_destinations[:20]:  # Show top 20 in export
             domain = dest.get("domain") or "-"
+            source = dest.get("domain_source") or "-"
             proto = dest.get("proto", "-")
             md_lines.append(
-                f"| {dest['dst_ip']} | {dest['dst_port']} | {proto.upper()} | {dest['count']} | {domain} |"
+                f"| {dest['dst_ip']} | {dest['dst_port']} | {proto.upper()} | {dest['count']} | {domain} | {source} |"
             )
         md_lines.append("")
 

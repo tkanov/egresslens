@@ -47,6 +47,8 @@ docker build -t egresslens/base:latest .
 egresslens run-app ./sample_app --args "dns example.com"
 ```
 
+The CLI writes `egress.jsonl`, `egress.strace`, and `run.json` to `egresslens-output/`. Upload `egress.jsonl` in the UI, optionally adding `run.json` for run metadata and `egress.strace` for backend domain enrichment.
+
 
 Report view:
 ![Report view](docs/images/report.png)
@@ -84,6 +86,7 @@ The CLI runs containers with:
 ## Current Limitations
 
 - **IPv4 only**: The MVP captures IPv4 (AF_INET) connections only. IPv6 (AF_INET6) connections are silently filtered out. See [getting-started.md#limitations](docs/getting-started.md#limitations-limitations).
+- **Domain enrichment scope**: Backend enrichment uses passive UDP DNS A-record answers visible in `egress.strace`, then bounded reverse DNS for unresolved public IPv4 addresses. DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, and IPv6 records are outside the current scope.
 
 ---
 

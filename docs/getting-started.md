@@ -128,20 +128,28 @@ $ head -n 5 egresslens-output/egress.jsonl
 
 Use the upload page (frontend app) to submit `egresslens-output/egress.jsonl`.
 
-Optionally add `egresslens-output/run.json` in the run metadata picker so the report can show command, image, exit code, and timing.
+Optionally add `egresslens-output/run.json` in the run metadata picker so the report can show command, image, exit code, and timing. Add `egresslens-output/egress.strace` in the passive DNS trace picker when you want the backend to enrich public IP destinations with domains.
+
+The backend first uses passive UDP DNS A-record answers visible in `egress.strace`. For unresolved public IPv4 addresses, it can then use bounded reverse DNS fallback. Existing JSONL-only uploads remain valid; unresolved destinations simply show an empty domain value.
 
 
 ![Upload screen](images/ui-frontend.png)
 
 ## Step 8: View the results in the UI
 
-After upload, the report page shows the KPIs, timeline, and top destinations.
+After upload, the report page shows the KPIs, timeline, and top destinations. Enriched reports show a primary domain for each destination when available, with a source hint such as `passive_dns` or `reverse_dns`. Markdown export includes the domain source and enrichment counters.
 
 ![Report view](images/report.png)
 
 ---
 
 ## Limitations
+
+### Domain enrichment scope
+
+Domain enrichment is backend-only. The CLI still writes the same `egress.jsonl` event format, and enrichment is applied only when a report is uploaded. Passive DNS currently parses UDP DNS A-record responses visible in `egress.strace`; DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, and IPv6 enrichment are outside the current scope.
+
+Reverse DNS fallback is enabled by default but bounded by configuration: `ENRICHMENT_REVERSE_DNS_TIMEOUT_SECONDS` defaults to `0.5`, and `ENRICHMENT_REVERSE_DNS_MAX_IPS` defaults to `100`. It skips private, loopback, link-local, multicast, unspecified, and reserved ranges.
 
 ### IPv4 only
 
