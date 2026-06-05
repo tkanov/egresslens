@@ -53,7 +53,7 @@ export function ReportPage() {
 
   return (
     <div className="min-h-screen bg-background p-6">
-      <div className="mx-auto max-w-6xl space-y-6">
+      <div className="mx-auto max-w-6xl space-y-6" data-testid="report-page">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-semibold">Report</h1>
@@ -73,17 +73,17 @@ export function ReportPage() {
             <Button variant="outline" asChild>
               <Link to="/">New upload</Link>
             </Button>
-            <Button onClick={handleExport} disabled={exporting}>
+            <Button data-testid="export-markdown" onClick={handleExport} disabled={exporting}>
               {exporting ? 'Exporting…' : 'Export .md'}
             </Button>
           </div>
         </div>
 
-        <KPICards summary={report.summary} />
-        <RunDetails metadata={report.metadata} />
-        <TopDestinations destinations={report.summary.top_destinations} />
-        <TimelineChart events={report.top_events} />
-        <FlagsPanel flags={report.flags} />
+        <div data-testid="kpi-section"><KPICards summary={report.summary} /></div>
+        <div data-testid="run-details-section"><RunDetails metadata={report.metadata} /></div>
+        <div data-testid="top-destinations-section"><TopDestinations destinations={report.summary.top_destinations} /></div>
+        <div data-testid="timeline-section"><TimelineChart events={report.top_events} /></div>
+        <div data-testid="flags-section"><FlagsPanel flags={report.flags} /></div>
       </div>
     </div>
   )
