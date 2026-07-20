@@ -102,9 +102,27 @@ def test_upload_with_strace_enriches_events_and_top_destinations():
     print("upload with strace enriches stored events and top destinations")
 
 
+def test_invalid_jsonl_line_reports_clean_error():
+    try:
+        with make_client() as client:
+            response = client.post(
+                "/api/reports/upload",
+                files={"file": ("egress.jsonl", "not json at all\n", "application/x-ndjson")},
+            )
+            assert response.status_code == 400, response.text
+            detail = response.json()["detail"]
+            # The specific per-line message must survive, not be re-wrapped by the
+            # broad handler into "Error reading file: 400: ...".
+            assert detail.startswith("Invalid JSON on line 1"), detail
+    finally:
+        main_app.app.dependency_overrides.clear()
+    print("invalid JSONL line reports a clean per-line error")
+
+
 def main():
     test_jsonl_only_upload_still_works()
     test_upload_with_strace_enriches_events_and_top_destinations()
+    test_invalid_jsonl_line_reports_clean_error()
     print("all upload enrichment tests passed")
 
 

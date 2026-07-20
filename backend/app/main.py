@@ -220,6 +220,11 @@ async def upload_report(
                 )
     except UnicodeDecodeError:
         raise HTTPException(status_code=400, detail="File must be UTF-8 encoded")
+    except HTTPException:
+        # Re-raise the specific per-line error (e.g. "Invalid JSON on line N")
+        # untouched; otherwise the broad handler below re-wraps it into a
+        # confusing "Error reading file: 400: ..." message.
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error reading file: {str(e)}")
 
