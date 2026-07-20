@@ -1,7 +1,7 @@
 """FastAPI application for EgressLens backend."""
 import uuid
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import List, Optional
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -93,12 +93,16 @@ def compute_aggregates(
 
     dest_counter = Counter((e.dst_ip, e.dst_port) for e in events)
 
-    dest_protocols: dict[tuple[str, int], str] = {}
+    # Most common protocol per destination in a single pass. The previous
+    # implementation re-scanned every event for each unique destination, which is
+    # O(unique_destinations * total_events); this is O(total_events). Counter
+    # preserves first-seen insertion order for ties, matching the old behaviour.
+    proto_counters: dict[tuple[str, int], Counter] = defaultdict(Counter)
     for e in events:
-        key = (e.dst_ip, e.dst_port)
-        if key not in dest_protocols:
-            protocols = [ev.proto for ev in events if ev.dst_ip == e.dst_ip and ev.dst_port == e.dst_port]
-            dest_protocols[key] = Counter(protocols).most_common(1)[0][0]
+        proto_counters[(e.dst_ip, e.dst_port)][e.proto] += 1
+    dest_protocols: dict[tuple[str, int], str] = {
+        key: counter.most_common(1)[0][0] for key, counter in proto_counters.items()
+    }
 
     top_destinations = []
     for (ip, port), count in dest_counter.most_common(50):
