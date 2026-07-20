@@ -64,11 +64,14 @@ def run_app_command(
     end_time = datetime.now()
 
     # Parse strace output to JSONL
+    parse_stats: dict = {}
     if strace_path.exists():
-        parse_to_jsonl(strace_path, jsonl_path)
+        parse_to_jsonl(strace_path, jsonl_path, parse_stats)
     else:
         # Create empty JSONL file if strace output doesn't exist
         jsonl_path.touch()
+
+    ipv6_connects_skipped = parse_stats.get("ipv6_connects_skipped", 0)
 
     # Count events from JSONL
     total_events, unique_dst_ips, unique_dst_ip_ports = count_events_from_jsonl(jsonl_path)
@@ -93,6 +96,7 @@ def run_app_command(
         total_events=total_events,
         unique_dst_ips=unique_dst_ips,
         unique_dst_ip_ports=unique_dst_ip_ports,
+        ipv6_connects_skipped=ipv6_connects_skipped,
     )
 
     # Write metadata
@@ -104,6 +108,8 @@ def run_app_command(
     print(f"  Output: {output_dir.absolute()}")
     print(f"  Events: {total_events} network events captured")
     print(f"  Unique destinations: {unique_dst_ips} IPs, {unique_dst_ip_ports} IP:port pairs")
+    if ipv6_connects_skipped:
+        print(f"  Note: {ipv6_connects_skipped} IPv6 connection(s) not captured (IPv4 only)")
     if app_meta["has_requirements"]:
         print(f"  Dependencies: Installed from requirements.txt")
 

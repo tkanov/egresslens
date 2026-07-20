@@ -32,6 +32,7 @@ def test_generate_metadata():
         total_events=5,
         unique_dst_ips=3,
         unique_dst_ip_ports=4,
+        ipv6_connects_skipped=2,
     )
 
     assert metadata["run_id"] == run_id
@@ -42,6 +43,7 @@ def test_generate_metadata():
     assert metadata["counts"]["total_events"] == 5
     assert metadata["counts"]["unique_dst_ips"] == 3
     assert metadata["counts"]["unique_dst_ip_ports"] == 4
+    assert metadata["counts"]["ipv6_connects_skipped"] == 2
     print("✓ Successfully generated metadata")
 
 

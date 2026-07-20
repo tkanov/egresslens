@@ -50,20 +50,36 @@ def protocol_from_socket(socket_type: str, protocol: str) -> str:
     return "unknown"
 
 
-def parse_strace_file(strace_path: Path) -> Iterator[dict]:
+def is_ipv6_connect_line(line: str) -> bool:
+    """Return True for a connect() to an AF_INET6 address.
+
+    IPv6 destinations are not captured (see docs/getting-started.md#limitations),
+    but they are counted so reports do not silently understate egress.
+    """
+    return "connect(" in line and "sa_family=AF_INET6" in line
+
+
+def parse_strace_file(strace_path: Path, stats: Optional[dict] = None) -> Iterator[dict]:
     """Parse strace output file and yield connection events.
 
     Args:
         strace_path: Path to strace output file
+        stats: Optional dict populated with parse counters once the file is fully
+            consumed. Currently records ``ipv6_connects_skipped`` (AF_INET6
+            connect() attempts that were counted but not captured).
 
     Yields:
         Event dictionaries matching the JSONL schema
     """
     socket_state: SocketState = {}
     pending_connects: PendingConnectState = {}
+    ipv6_connects_skipped = 0
 
     with open(strace_path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
+            if is_ipv6_connect_line(line):
+                ipv6_connects_skipped += 1
+
             socket_info = parse_socket_line(line)
             if socket_info:
                 pid, fd, proto = socket_info
@@ -88,6 +104,9 @@ def parse_strace_file(strace_path: Path) -> Iterator[dict]:
             event = parse_strace_line(line, socket_state)
             if event:
                 yield event
+
+    if stats is not None:
+        stats["ipv6_connects_skipped"] = ipv6_connects_skipped
 
 
 def build_connect_event(
@@ -194,12 +213,14 @@ def parse_resumed_connect_line(line: str) -> Optional[tuple[int, int, Optional[s
     return pid, result_code, errno
 
 
-def parse_to_jsonl(strace_path: Path, output_path: Path) -> int:
+def parse_to_jsonl(strace_path: Path, output_path: Path, stats: Optional[dict] = None) -> int:
     """Parse strace file and write JSONL output.
 
     Args:
         strace_path: Path to strace output file
         output_path: Path to write JSONL output
+        stats: Optional dict populated with parse counters (e.g.
+            ``ipv6_connects_skipped``) after the file is fully parsed.
 
     Returns:
         Number of events parsed
@@ -208,7 +229,7 @@ def parse_to_jsonl(strace_path: Path, output_path: Path) -> int:
     count = 0
 
     with open(output_path, "w", encoding="utf-8") as f:
-        for event in parse_strace_file(strace_path):
+        for event in parse_strace_file(strace_path, stats):
             f.write(json.dumps(event) + "\n")
             count += 1
 
