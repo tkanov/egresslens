@@ -8,8 +8,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import socket
+
 from app.config import load_config
-from app.enrichment import enrich_events, parse_passive_dns
+from app.enrichment import enrich_events, parse_passive_dns, reverse_lookup
 from app.schemas import EventSchema
 
 
@@ -167,6 +169,27 @@ def test_reverse_dns_max_ips():
     print("reverse DNS max lookup cap is enforced")
 
 
+def test_reverse_lookup_restores_default_timeout():
+    original = socket.getdefaulttimeout()
+    try:
+        socket.setdefaulttimeout(None)
+
+        # Success path must not leak the temporary lookup timeout.
+        result = reverse_lookup("8.8.8.8", 0.01, lambda ip: ("dns.google", [], [ip]))
+        assert result == "dns.google"
+        assert socket.getdefaulttimeout() is None
+
+        # Failure path (caught resolver error) must also restore the default.
+        def boom(ip):
+            raise socket.herror("nope")
+
+        assert reverse_lookup("8.8.8.8", 0.01, boom) is None
+        assert socket.getdefaulttimeout() is None
+    finally:
+        socket.setdefaulttimeout(original)
+    print("reverse DNS restores the global default timeout")
+
+
 def test_config_defaults_and_env_overrides():
     names = [
         "ENRICHMENT_ENABLED",
@@ -208,6 +231,7 @@ def main():
     test_passive_dns_takes_precedence_over_reverse_dns()
     test_reverse_dns_fallback_and_private_skip()
     test_reverse_dns_max_ips()
+    test_reverse_lookup_restores_default_timeout()
     test_config_defaults_and_env_overrides()
     print("all enrichment tests passed")
 

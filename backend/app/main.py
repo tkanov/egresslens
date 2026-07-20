@@ -2,6 +2,7 @@
 import uuid
 import json
 from collections import Counter
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -65,6 +66,19 @@ def startup_event():
 def health_check():
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+def _to_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Treat a naive stored timestamp as UTC so clients render the right instant.
+
+    created_at is recorded with datetime.now(timezone.utc), but SQLite drops
+    tzinfo on write, so it comes back naive. Serializing a naive datetime emits an
+    offset-less ISO string that browsers parse as local time. Re-attach UTC so the
+    API always reports an unambiguous instant.
+    """
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 def compute_aggregates(
@@ -191,17 +205,24 @@ def calculate_flags(events: List[EventSchema], summary: dict) -> List[dict]:
 
 
 @app.post("/api/reports/upload", response_model=ReportUploadResponse, tags=["reports"])
-async def upload_report(
+def upload_report(
     file: UploadFile = File(...),
     metadata_file: Optional[UploadFile] = File(None),
     strace_file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
 ):
-    """Upload and process a JSONL file to create a report."""
+    """Upload and process a JSONL file to create a report.
+
+    Defined as a sync endpoint so FastAPI runs it in a threadpool: JSONL parsing,
+    aggregation, and the blocking reverse-DNS lookups in enrichment would
+    otherwise stall the event loop for the whole process (up to
+    reverse_dns_max_ips * timeout seconds per upload). Uploads are read via the
+    synchronous .file handle for the same reason.
+    """
     # Read and parse JSONL file
     events = []
     try:
-        content = await file.read()
+        content = file.file.read()
         lines = content.decode("utf-8").strip().split("\n")
         
         for line_num, line in enumerate(lines, start=1):
@@ -226,7 +247,7 @@ async def upload_report(
     run_metadata = {}
     if metadata_file is not None:
         try:
-            metadata_content = await metadata_file.read()
+            metadata_content = metadata_file.file.read()
             if metadata_content:
                 metadata_data = json.loads(metadata_content.decode("utf-8"))
                 if not isinstance(metadata_data, dict):
@@ -240,7 +261,7 @@ async def upload_report(
     strace_text = ""
     if strace_file is not None:
         try:
-            strace_content = await strace_file.read()
+            strace_content = strace_file.file.read()
             strace_text = strace_content.decode("utf-8", errors="ignore")
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error reading egress.strace: {str(e)}")
@@ -304,7 +325,7 @@ def get_report(report_id: str, db: Session = Depends(get_db)):
 
     return ReportResponse(
         id=report.id,
-        created_at=report.created_at,
+        created_at=_to_utc(report.created_at),
         metadata=report.run_metadata,  # Map run_metadata to metadata for API
         summary=report.summary,
         flags=flags,
@@ -353,7 +374,7 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
         "# EgressLens Report",
         "",
         f"**Report ID:** `{report.id}`",
-        f"**Created:** {report.created_at.isoformat()}",
+        f"**Created:** {_to_utc(report.created_at).isoformat()}",
         "",
         "## Summary",
         "",

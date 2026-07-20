@@ -4,6 +4,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
+import threading
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -323,18 +324,27 @@ def is_public_ip(value: str) -> bool:
     )
 
 
+# socket.setdefaulttimeout mutates a process-global value and gethostbyaddr has
+# no per-call timeout. The sync upload endpoint runs in a threadpool, so without
+# serialization two concurrent uploads could interleave the save/set/restore and
+# leak a stale default timeout onto every other socket in the process. Hold this
+# lock for the whole save/set/restore so each lookup is atomic w.r.t. the global.
+_REVERSE_DNS_LOCK = threading.Lock()
+
+
 def reverse_lookup(
     ip: str,
     timeout_seconds: float,
     resolver: Resolver,
 ) -> Optional[str]:
-    previous_timeout = socket.getdefaulttimeout()
-    try:
-        socket.setdefaulttimeout(timeout_seconds)
-        hostname, _, _ = resolver(ip)
-    except (OSError, socket.herror, socket.gaierror, TimeoutError):
-        return None
-    finally:
-        socket.setdefaulttimeout(previous_timeout)
+    with _REVERSE_DNS_LOCK:
+        previous_timeout = socket.getdefaulttimeout()
+        try:
+            socket.setdefaulttimeout(timeout_seconds)
+            hostname, _, _ = resolver(ip)
+        except (OSError, socket.herror, socket.gaierror, TimeoutError):
+            return None
+        finally:
+            socket.setdefaulttimeout(previous_timeout)
 
     return hostname.rstrip(".").lower() if hostname else None

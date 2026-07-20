@@ -102,9 +102,32 @@ def test_upload_with_strace_enriches_events_and_top_destinations():
     print("upload with strace enriches stored events and top destinations")
 
 
+def test_report_created_at_is_utc_aware():
+    original_reverse = main_app.settings.enrichment.reverse_dns_enabled
+    main_app.settings.enrichment.reverse_dns_enabled = False
+    try:
+        with make_client() as client:
+            response = client.post(
+                "/api/reports/upload",
+                files={"file": ("egress.jsonl", jsonl_event("93.184.216.34"), "application/x-ndjson")},
+            )
+            assert response.status_code == 200, response.text
+            report_id = response.json()["report_id"]
+            created_at = client.get(f"/api/reports/{report_id}").json()["created_at"]
+            # Naive SQLite timestamps must be emitted with an explicit UTC marker
+            # ("Z" or "+00:00"), otherwise browsers parse the offset-less string as
+            # local time.
+            assert created_at.endswith(("Z", "+00:00")), created_at
+    finally:
+        main_app.settings.enrichment.reverse_dns_enabled = original_reverse
+        main_app.app.dependency_overrides.clear()
+    print("report created_at is serialized as UTC-aware")
+
+
 def main():
     test_jsonl_only_upload_still_works()
     test_upload_with_strace_enriches_events_and_top_destinations()
+    test_report_created_at_is_utc_aware()
     print("all upload enrichment tests passed")
 
 
