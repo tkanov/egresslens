@@ -15,6 +15,7 @@ export function ReportPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -29,7 +30,10 @@ export function ReportPage() {
   const handleExport = () => {
     if (!id) return
     setExporting(true)
-    downloadReport(id).finally(() => setExporting(false))
+    setExportError(null)
+    downloadReport(id)
+      .catch((e) => setExportError(e instanceof ApiError ? e.detail ?? e.message : String(e)))
+      .finally(() => setExporting(false))
   }
 
   if (loading) {
@@ -78,6 +82,10 @@ export function ReportPage() {
             </Button>
           </div>
         </div>
+
+        {exportError && (
+          <p className="text-right text-sm text-destructive">Export failed: {exportError}</p>
+        )}
 
         <KPICards summary={report.summary} />
         <RunDetails metadata={report.metadata} />
