@@ -86,6 +86,9 @@ ehthumbs.db
 
 # EgressLens output
 egresslens-output/
+demo-output/
+frontend/test-results/
+frontend/playwright-report/
 
 # per-project venv
 sample_app/.venv/
