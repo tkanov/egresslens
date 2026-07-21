@@ -19,6 +19,7 @@ from app.enrichment import (
     empty_enrichment_summary,
     enrich_events,
 )
+from app.policy import PolicyError, evaluate_policy, load_policy
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -226,11 +227,44 @@ def calculate_flags(events: List[EventSchema], summary: dict) -> List[dict]:
     return flags
 
 
+def _destination_label(dest: dict) -> str:
+    """Human label for an unexpected destination: domain if known, else ip:port."""
+    if dest.get("domain"):
+        return dest["domain"]
+    return f"{dest['dst_ip']}:{dest['dst_port']}"
+
+
+def policy_verdict_flag(policy: Optional[dict]) -> Optional[dict]:
+    """Turn a failing policy verdict into a high-severity flag, or None.
+
+    Surfacing the verdict as a flag means it renders in the existing UI panel and
+    markdown export with no extra plumbing, and marks a failed egress policy as
+    the most serious finding in the report.
+    """
+    if not policy or policy.get("verdict") != "fail":
+        return None
+
+    unexpected = policy.get("unexpected", [])
+    labels = [_destination_label(dest) for dest in unexpected[:5]]
+    listed = ", ".join(labels)
+    remaining = len(unexpected) - len(labels)
+    if remaining > 0:
+        listed += f", and {remaining} more"
+
+    count = policy.get("unexpected_count", len(unexpected))
+    return {
+        "name": "Unexpected destinations",
+        "description": f"{count} destination(s) not on the allowlist: {listed}",
+        "severity": "high",
+    }
+
+
 @app.post("/api/reports/upload", response_model=ReportUploadResponse, tags=["reports"])
 def upload_report(
     file: UploadFile = File(...),
     metadata_file: Optional[UploadFile] = File(None),
     strace_file: Optional[UploadFile] = File(None),
+    policy_file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
 ):
     """Upload and process a JSONL file to create a report.
@@ -297,6 +331,23 @@ def upload_report(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error reading egress.strace: {str(e)}")
 
+    # Parse the optional allowlist before doing enrichment work so a malformed
+    # policy fails fast with a clear 400.
+    policy = None
+    if policy_file is not None:
+        try:
+            policy_content = _read_upload(policy_file, max_bytes, "policy file")
+            policy_data = json.loads(policy_content.decode("utf-8"))
+            policy = load_policy(policy_data)
+        except HTTPException:
+            raise
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="policy file must be UTF-8 encoded")
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid policy JSON: {str(e)}")
+        except PolicyError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid policy: {str(e)}")
+
     if settings.enrichment.enabled:
         enrichment = enrich_events(
             events,
@@ -314,12 +365,24 @@ def upload_report(
         enrichment.domain_candidates if enrichment else {},
     )
     summary["enrichment"] = enrichment.summary() if enrichment else empty_enrichment_summary()
-    
+
+    # Judge destinations against the optional allowlist over ALL destinations,
+    # using the same domain attribution the summary displays.
+    if policy is not None:
+        summary["policy"] = evaluate_policy(
+            policy,
+            events,
+            enrichment.domain_candidates if enrichment else {},
+        )
+
     # Store all parsed events so detail views and exports stay consistent with the summary.
     top_events = events
-    
+
     # Calculate flags
     flags = calculate_flags(events, summary)
+    policy_flag = policy_verdict_flag(summary.get("policy"))
+    if policy_flag:
+        flags.append(policy_flag)
 
     # Create report
     report_id = str(uuid.uuid4())
@@ -422,6 +485,32 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
         f"- **Failure Rate:** {summary.get('failure_rate', 0.0):.1%}",
         "",
     ])
+
+    policy = summary.get("policy")
+    if policy and policy.get("enabled"):
+        verdict = "PASS" if policy.get("verdict") == "pass" else "FAIL"
+        md_lines.extend([
+            "## Egress Policy",
+            "",
+            f"- **Verdict:** {verdict}",
+            f"- **Allow rules:** {policy.get('allow_rules', 0)}",
+            f"- **Expected destinations:** {policy.get('expected_count', 0)}",
+            f"- **Unexpected destinations:** {policy.get('unexpected_count', 0)}",
+            "",
+        ])
+        unexpected = policy.get("unexpected", [])
+        if unexpected:
+            md_lines.extend([
+                "| Domain | IP | Port | Protocol | Count |",
+                "|--------|----|----|----------|-------|",
+            ])
+            for dest in unexpected:
+                domain = dest.get("domain") or "-"
+                proto = (dest.get("proto") or "-").upper()
+                md_lines.append(
+                    f"| {domain} | {dest['dst_ip']} | {dest['dst_port']} | {proto} | {dest['count']} |"
+                )
+            md_lines.append("")
 
     enrichment_summary = summary.get("enrichment") or {}
     if enrichment_summary:

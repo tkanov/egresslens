@@ -160,12 +160,85 @@ def test_oversized_upload_is_rejected():
     print("oversized upload is rejected with 413")
 
 
+def _upload_with_policy(client, policy: str):
+    """Upload an event for 93.184.216.34 (resolves to example.com) with a policy."""
+    payload = dns_response("example.com", [("example.com", "93.184.216.34")])
+    return client.post(
+        "/api/reports/upload",
+        files={
+            "file": ("egress.jsonl", jsonl_event("93.184.216.34"), "application/x-ndjson"),
+            "strace_file": ("egress.strace", strace_recv_line(payload), "text/plain"),
+            "policy_file": ("policy.json", policy, "application/json"),
+        },
+    )
+
+
+def test_policy_pass_records_verdict_without_flag():
+    original_reverse = main_app.settings.enrichment.reverse_dns_enabled
+    main_app.settings.enrichment.reverse_dns_enabled = False
+    try:
+        with make_client() as client:
+            response = _upload_with_policy(client, '{"allow": ["example.com"]}')
+            assert response.status_code == 200, response.text
+            report = client.get(f"/api/reports/{response.json()['report_id']}").json()
+            policy = report["summary"]["policy"]
+            assert policy["verdict"] == "pass"
+            assert policy["expected_count"] == 1
+            assert policy["unexpected_count"] == 0
+            assert not any(f["name"] == "Unexpected destinations" for f in report["flags"])
+    finally:
+        main_app.settings.enrichment.reverse_dns_enabled = original_reverse
+        main_app.app.dependency_overrides.clear()
+    print("policy pass records a verdict and raises no flag")
+
+
+def test_policy_fail_raises_high_severity_flag():
+    original_reverse = main_app.settings.enrichment.reverse_dns_enabled
+    main_app.settings.enrichment.reverse_dns_enabled = False
+    try:
+        with make_client() as client:
+            response = _upload_with_policy(client, '{"allow": ["pypi.org"]}')
+            assert response.status_code == 200, response.text
+            report = client.get(f"/api/reports/{response.json()['report_id']}").json()
+            policy = report["summary"]["policy"]
+            assert policy["verdict"] == "fail"
+            assert policy["unexpected_count"] == 1
+            assert policy["unexpected"][0]["domain"] == "example.com"
+            flag = next(f for f in report["flags"] if f["name"] == "Unexpected destinations")
+            assert flag["severity"] == "high"
+            assert "example.com" in flag["description"]
+    finally:
+        main_app.settings.enrichment.reverse_dns_enabled = original_reverse
+        main_app.app.dependency_overrides.clear()
+    print("policy fail raises a high-severity flag")
+
+
+def test_malformed_policy_is_rejected():
+    try:
+        with make_client() as client:
+            response = client.post(
+                "/api/reports/upload",
+                files={
+                    "file": ("egress.jsonl", jsonl_event("93.184.216.34"), "application/x-ndjson"),
+                    "policy_file": ("policy.json", '{"allow": [{"port": 443}]}', "application/json"),
+                },
+            )
+            assert response.status_code == 400, response.text
+            assert "policy" in response.json()["detail"].lower()
+    finally:
+        main_app.app.dependency_overrides.clear()
+    print("malformed policy is rejected with 400")
+
+
 def main():
     test_jsonl_only_upload_still_works()
     test_upload_with_strace_enriches_events_and_top_destinations()
     test_report_created_at_is_utc_aware()
     test_invalid_jsonl_line_reports_clean_error()
     test_oversized_upload_is_rejected()
+    test_policy_pass_records_verdict_without_flag()
+    test_policy_fail_raises_high_severity_flag()
+    test_malformed_policy_is_rejected()
     print("all upload enrichment tests passed")
 
 
