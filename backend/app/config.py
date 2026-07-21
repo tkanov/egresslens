@@ -49,10 +49,22 @@ class EnrichmentConfig(BaseModel):
     )
 
 
+class UploadConfig(BaseModel):
+    """Limits for uploaded report files."""
+    max_upload_mb: int = Field(
+        50,
+        gt=0,
+        description="Maximum size, in MB, accepted for any single uploaded file "
+        "(egress.jsonl, run.json, or egress.strace). Guards against unbounded "
+        "memory use, since each upload is read fully into memory.",
+    )
+
+
 class Settings(BaseModel):
     """Application settings."""
     flags: FlagThresholds = FlagThresholds()
     enrichment: EnrichmentConfig = EnrichmentConfig()
+    uploads: UploadConfig = UploadConfig()
 
 
 def parse_bool_env(name: str, value: str) -> bool:
@@ -88,6 +100,9 @@ def load_config() -> Settings:
             "reverse_dns_timeout_seconds": 0.5,
             "reverse_dns_max_ips": 100,
         },
+        "uploads": {
+            "max_upload_mb": 50,
+        },
     }
 
     config_file = Path(__file__).parent.parent / "config.yaml"
@@ -98,6 +113,8 @@ def load_config() -> Settings:
                 config_dict["flags"].update(yaml_config["flags"])
             if "enrichment" in yaml_config:
                 config_dict["enrichment"].update(yaml_config["enrichment"])
+            if "uploads" in yaml_config:
+                config_dict["uploads"].update(yaml_config["uploads"])
 
     env_high_dest = os.getenv("FLAG_HIGH_DEST_THRESHOLD")
     if env_high_dest is not None and env_high_dest != "":
@@ -198,6 +215,22 @@ def load_config() -> Settings:
                 f"'{env_reverse_max}' must be greater than or equal to 0."
             )
         config_dict["enrichment"]["reverse_dns_max_ips"] = max_ips
+
+    env_max_upload = os.getenv("MAX_UPLOAD_MB")
+    if env_max_upload is not None and env_max_upload != "":
+        try:
+            max_upload = int(env_max_upload)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid configuration: MAX_UPLOAD_MB='{env_max_upload}' "
+                "must be a positive integer."
+            ) from exc
+        if max_upload <= 0:
+            raise ValueError(
+                f"Invalid configuration: MAX_UPLOAD_MB='{env_max_upload}' "
+                "must be greater than 0."
+            )
+        config_dict["uploads"]["max_upload_mb"] = max_upload
 
     return Settings(**config_dict)
 
