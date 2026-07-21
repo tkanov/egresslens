@@ -57,8 +57,41 @@ Open `http://localhost:5173` and upload:
 - `egresslens-output/egress.jsonl` as the report
 - `egresslens-output/run.json` for metadata
 - `egresslens-output/egress.strace` for domain enrichment
+- an optional `policy.json` allowlist (see [Egress Policy](#egress-policy))
 
 ![Report view](docs/images/report.png)
+
+## Egress Policy
+
+Upload an allowlist alongside a report to turn it into a verdict: every observed
+destination is checked against the policy, and anything that does not match is
+reported as unexpected. The report gets a **PASS/FAIL** verdict, and a failing
+verdict raises a high-severity "Unexpected destinations" flag (also included in
+the markdown export).
+
+The policy is a JSON file with an `allow` list. Each entry is either a shorthand
+string or an object:
+
+```json
+{
+  "allow": [
+    "*.github.com",
+    "pypi.org",
+    "140.82.112.0/20",
+    { "domain": "files.pythonhosted.org" },
+    { "ip": "151.101.0.0/16", "port": 443 }
+  ]
+}
+```
+
+- A **domain** matches exactly (`pypi.org`), or as a leading-wildcard covering
+  subdomains only (`*.github.com` matches `api.github.com`, not the apex or
+  `notgithub.com`).
+- An **ip** is a single address or a CIDR range.
+- An object rule may add a **port**; every field it declares must match.
+
+A destination is expected if it matches at least one rule. Destinations that
+could not be named (unresolved IPs) match `ip`/CIDR rules only.
 
 ## CLI
 
@@ -103,6 +136,7 @@ The CLI still mounts the app read-only, drops other capabilities, uses `no-new-p
 - IPv4 only. IPv6 connections are counted (reported as `ipv6_connects_skipped`) but their destinations are not captured.
 - Domain enrichment sees UDP DNS A-record answers in `egress.strace`; it does not cover DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, or IPv6.
 - Reverse DNS fallback skips private and non-routable IP ranges and is capped by backend configuration.
+- Policy `domain` rules only match destinations that were named during enrichment, so include `egress.strace` when using them; unresolved IPs can still be covered with `ip`/CIDR rules.
 
 ## License
 
