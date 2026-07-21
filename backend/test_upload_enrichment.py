@@ -141,11 +141,31 @@ def test_invalid_jsonl_line_reports_clean_error():
     print("invalid JSONL line reports a clean per-line error")
 
 
+def test_oversized_upload_is_rejected():
+    original = main_app.settings.uploads.max_upload_mb
+    main_app.settings.uploads.max_upload_mb = 1
+    try:
+        with make_client() as client:
+            # ~1 MB + 1 KB of content, just over the 1 MB cap. Rejected on size
+            # before any parsing, so the body need not be valid JSONL.
+            oversized = "x" * (1024 * 1024 + 1024)
+            response = client.post(
+                "/api/reports/upload",
+                files={"file": ("egress.jsonl", oversized, "application/x-ndjson")},
+            )
+            assert response.status_code == 413, response.text
+    finally:
+        main_app.settings.uploads.max_upload_mb = original
+        main_app.app.dependency_overrides.clear()
+    print("oversized upload is rejected with 413")
+
+
 def main():
     test_jsonl_only_upload_still_works()
     test_upload_with_strace_enriches_events_and_top_destinations()
     test_report_created_at_is_utc_aware()
     test_invalid_jsonl_line_reports_clean_error()
+    test_oversized_upload_is_rejected()
     print("all upload enrichment tests passed")
 
 

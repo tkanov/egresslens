@@ -2,6 +2,7 @@
 import uuid
 import json
 from collections import Counter, defaultdict
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Query
@@ -19,10 +20,18 @@ from app.enrichment import (
     enrich_events,
 )
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Create database tables on startup (replaces the deprecated on_event hook)."""
+    init_db()
+    yield
+
+
 app = FastAPI(
     title="EgressLens API",
     description="API for uploading and analyzing network egress monitoring data",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware
@@ -56,12 +65,6 @@ FAILURE_THRESHOLD = settings.flags.failure_threshold
 USUAL_PORTS = set(settings.flags.usual_ports)
 
 
-@app.on_event("startup")
-def startup_event():
-    """Initialize database on startup."""
-    init_db()
-
-
 @app.get("/health", tags=["health"])
 def health_check():
     """Health check endpoint."""
@@ -79,6 +82,21 @@ def _to_utc(value: Optional[datetime]) -> Optional[datetime]:
     if value is not None and value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
+
+
+def _read_upload(upload: UploadFile, max_bytes: int, label: str) -> bytes:
+    """Read an uploaded file, rejecting anything larger than max_bytes.
+
+    Reads at most max_bytes + 1 so an oversized upload is caught without pulling
+    the whole (potentially huge) file into memory first.
+    """
+    data = upload.file.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{label} exceeds the maximum upload size of {max_bytes // (1024 * 1024)} MB",
+        )
+    return data
 
 
 def compute_aggregates(
@@ -223,10 +241,12 @@ def upload_report(
     reverse_dns_max_ips * timeout seconds per upload). Uploads are read via the
     synchronous .file handle for the same reason.
     """
+    max_bytes = settings.uploads.max_upload_mb * 1024 * 1024
+
     # Read and parse JSONL file
     events = []
     try:
-        content = file.file.read()
+        content = _read_upload(file, max_bytes, "report file")
         lines = content.decode("utf-8").strip().split("\n")
         
         for line_num, line in enumerate(lines, start=1):
@@ -256,7 +276,7 @@ def upload_report(
     run_metadata = {}
     if metadata_file is not None:
         try:
-            metadata_content = metadata_file.file.read()
+            metadata_content = _read_upload(metadata_file, max_bytes, "run.json")
             if metadata_content:
                 metadata_data = json.loads(metadata_content.decode("utf-8"))
                 if not isinstance(metadata_data, dict):
@@ -270,8 +290,10 @@ def upload_report(
     strace_text = ""
     if strace_file is not None:
         try:
-            strace_content = strace_file.file.read()
+            strace_content = _read_upload(strace_file, max_bytes, "egress.strace")
             strace_text = strace_content.decode("utf-8", errors="ignore")
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error reading egress.strace: {str(e)}")
 

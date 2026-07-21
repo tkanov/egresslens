@@ -27,7 +27,7 @@ STRACE_STRING_LIMIT = 4096
 class DockerRunner:
     """Runner for executing commands in Docker containers with strace."""
 
-    def __init__(self, image: str = "egresslens/base:latest"):
+    def __init__(self, image: str = DEFAULT_IMAGE):
         """Initialize Docker runner.
 
         Args:
