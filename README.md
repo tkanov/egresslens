@@ -3,7 +3,7 @@
 Trace outbound network activity from Python apps in Docker, write the events as JSONL, and inspect the results in a small web UI.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Docker 20.10+](https://img.shields.io/badge/docker-20.10+-2496ED.svg)](https://www.docker.com/)
 
 ## What It Does
@@ -18,7 +18,7 @@ The backend can enrich uploaded reports with domains from passive DNS seen in th
 
 ## Quick Start
 
-Requirements: Docker 20.10+, Python 3.8+, and Node.js 18+ for the UI.
+Requirements: Docker 20.10+, Python 3.9+, and Node.js 18+ for the UI.
 
 ```bash
 pip install -e cli/
@@ -96,7 +96,7 @@ The CLI still mounts the app read-only, drops other capabilities, uses `no-new-p
 
 ## Limits
 
-- IPv4 only. IPv6 connections are currently ignored.
+- IPv4 only. IPv6 connections are counted (reported as `ipv6_connects_skipped`) but their destinations are not captured.
 - Domain enrichment sees UDP DNS A-record answers in `egress.strace`; it does not cover DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, or IPv6.
 - Reverse DNS fallback skips private and non-routable IP ranges and is capped by backend configuration.
 
