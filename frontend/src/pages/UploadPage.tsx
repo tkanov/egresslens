@@ -13,26 +13,28 @@ export function UploadPage() {
   const [file, setFile] = useState<File | null>(null)
   const [metadataFile, setMetadataFile] = useState<File | null>(null)
   const [straceFile, setStraceFile] = useState<File | null>(null)
+  const [policyFile, setPolicyFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const metadataInputRef = useRef<HTMLInputElement>(null)
   const straceInputRef = useRef<HTMLInputElement>(null)
+  const policyInputRef = useRef<HTMLInputElement>(null)
 
   const handleUpload = useCallback(async () => {
     if (!file) return
     setError(null)
     setUploading(true)
     try {
-      const { report_id } = await uploadReport(file, metadataFile, straceFile)
+      const { report_id } = await uploadReport(file, metadataFile, straceFile, policyFile)
       navigate(`/reports/${report_id}`)
     } catch (e) {
       setError(e instanceof ApiError ? e.detail ?? e.message : String(e))
     } finally {
       setUploading(false)
     }
-  }, [file, metadataFile, straceFile, navigate])
+  }, [file, metadataFile, straceFile, policyFile, navigate])
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -84,6 +86,18 @@ export function UploadPage() {
         return
       }
       setStraceFile(f)
+      setError(null)
+    }
+  }, [])
+
+  const onPolicyFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (f) {
+      if (!f.name.endsWith('.json')) {
+        setError('Please choose a JSON allowlist file.')
+        return
+      }
+      setPolicyFile(f)
       setError(null)
     }
   }, [])
@@ -203,6 +217,43 @@ export function UploadPage() {
                 type="file"
                 accept=".strace,text/plain"
                 onChange={onStraceFileChange}
+                className="hidden"
+                aria-hidden
+              />
+            </div>
+
+            <div className="rounded-lg border p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium">Egress allowlist</p>
+                  <p className="text-sm text-muted-foreground">
+                    {policyFile ? policyFile.name : 'Optional: add a policy.json to flag destinations that are not expected.'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {policyFile && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setPolicyFile(null)}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => policyInputRef.current?.click()}
+                  >
+                    Choose policy.json
+                  </Button>
+                </div>
+              </div>
+              <input
+                ref={policyInputRef}
+                type="file"
+                accept=".json,application/json"
+                onChange={onPolicyFileChange}
                 className="hidden"
                 aria-hidden
               />
