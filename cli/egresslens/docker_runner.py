@@ -15,6 +15,14 @@ except ImportError:
 
 DEFAULT_IMAGE = "egresslens/base:latest"
 
+# strace's -s bounds how many bytes of each syscall string argument are recorded.
+# The backend derives passive-DNS domains from captured recvfrom()/recvmsg()
+# buffers, so this must be large enough to hold a whole DNS response. The old
+# value of 256 truncated most real answers -- multiple A-records, EDNS, or CNAME
+# chains easily exceed it -- which silently dropped enrichment. 4096 covers UDP
+# DNS responses including EDNS0, at the cost of somewhat larger trace files.
+STRACE_STRING_LIMIT = 4096
+
 
 class DockerRunner:
     """Runner for executing commands in Docker containers with strace."""
@@ -43,7 +51,8 @@ class DockerRunner:
         inner = shlex.quote(cmd_capture)
         strace_cmd = [
             "sh", "-c",
-            f"strace -f -ttt -e trace=network -s 256 -o {container_strace_path} -- sh -c {inner} && sync"
+            f"strace -f -ttt -e trace=network -s {STRACE_STRING_LIMIT} "
+            f"-o {container_strace_path} -- sh -c {inner} && sync"
         ]
         return container_strace_path, strace_cmd
 

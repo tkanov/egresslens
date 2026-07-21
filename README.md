@@ -28,6 +28,10 @@ egresslens run-app ./sample_app --args "dns example.com"
 
 Output lands in `egresslens-output/`.
 
+## Demo
+
+Run the repeatable live demo and browser recording flow with [docs/demo.md](docs/demo.md).
+
 ## View A Report
 
 Start the API:
