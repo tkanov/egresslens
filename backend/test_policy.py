@@ -175,6 +175,21 @@ def test_wildcard_rule_over_destinations():
     assert verdict["unexpected"][0]["domain"] == "evil.example.com"
 
 
+def test_verdict_covers_destinations_beyond_top_50():
+    # The verdict must judge EVERY destination, not just the top 50 shown in the
+    # summary table. The one unexpected destination here has the lowest count, so
+    # a naive top-50-by-count cap would drop it and silently pass a real egress.
+    events = []
+    for i in range(1, 55):  # 54 allowed destinations, count 2 each
+        events += [event(f"10.0.0.{i}")] * 2
+    events.append(event("203.0.113.9"))  # 1 unexpected destination, count 1 (last)
+    policy = load_policy({"allow": ["10.0.0.0/8"]})
+    verdict = evaluate_policy(policy, events, {})
+    assert verdict["verdict"] == "fail"
+    assert verdict["unexpected_count"] == 1
+    assert verdict["unexpected"][0]["dst_ip"] == "203.0.113.9"
+
+
 def test_unexpected_sorted_by_count_desc():
     events = [event("2.2.2.2")] + [event("3.3.3.3")] * 3
     policy = load_policy({"allow": ["example.com"]})

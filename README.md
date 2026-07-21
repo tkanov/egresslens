@@ -93,6 +93,10 @@ string or an object:
 A destination is expected if it matches at least one rule. Destinations that
 could not be named (unresolved IPs) match `ip`/CIDR rules only.
 
+The policy verdict is independent of the other flags: an allowlisted destination
+on an uncommon port can still raise the "Unusual ports" flag, so a report may
+show a **PASS** verdict alongside other flags.
+
 ## CLI
 
 Trace a Python project with an entry point named `__main__.py`, `main.py`, or `app.py`:
