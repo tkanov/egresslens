@@ -19,6 +19,7 @@ def generate_metadata(
     total_events: int,
     unique_dst_ips: int,
     unique_dst_ip_ports: int,
+    ipv6_connects_skipped: int = 0,
 ) -> dict:
     """Generate run metadata dictionary.
 
@@ -34,6 +35,8 @@ def generate_metadata(
         total_events: Total number of events captured
         unique_dst_ips: Number of unique destination IPs
         unique_dst_ip_ports: Number of unique destination IP:port pairs
+        ipv6_connects_skipped: AF_INET6 connect() attempts that were observed but
+            not captured (IPv4 only)
 
     Returns:
         Metadata dictionary
@@ -51,6 +54,7 @@ def generate_metadata(
             "total_events": total_events,
             "unique_dst_ips": unique_dst_ips,
             "unique_dst_ip_ports": unique_dst_ip_ports,
+            "ipv6_connects_skipped": ipv6_connects_skipped,
         },
     }
 

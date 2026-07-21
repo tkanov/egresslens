@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 from egresslens.strace_parser import (
+    is_ipv6_connect_line,
     parse_resumed_connect_line,
     parse_socket_line,
     parse_strace_line,
@@ -138,10 +139,49 @@ def test_parse_to_jsonl():
         print("✓ Successfully parsed file to JSONL")
 
 
+def test_ipv6_connects_counted_not_captured():
+    """IPv6 connect() attempts are not emitted as events but are counted."""
+    assert is_ipv6_connect_line(
+        '111 1.0 connect(5, {sa_family=AF_INET6, sin6_port=htons(443)}, 28) = 0'
+    )
+    assert not is_ipv6_connect_line(
+        '111 1.0 connect(3, {sa_family=AF_INET, sin_port=htons(443)}, 16) = 0'
+    )
+    assert not is_ipv6_connect_line("111 1.0 socket(AF_INET6, SOCK_STREAM, 0) = 5")
+
+    strace_content = """12345 1707150823.500 socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) = 3
+12345 1707150823.512 connect(3, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("151.101.1.69")}, 16) = 0
+12346 1707150824.100 connect(4, {sa_family=AF_INET6, sin6_port=htons(443), sin6_addr=inet_pton(AF_INET6, "2606:2800:220:1:248:1893:25c8:1946")}, 28) = 0
+12347 1707150825.100 connect(5, {sa_family=AF_INET6, sin6_port=htons(80), sin6_addr=inet_pton(AF_INET6, "2001:4860:4860::8888")}, 28 <unfinished ...>
+12347 1707150825.101 <... connect resumed>) = 0
+"""
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        strace_file = tmp_path / "strace.out"
+        jsonl_file = tmp_path / "egress.jsonl"
+        strace_file.write_text(strace_content)
+
+        stats: dict = {}
+        count = parse_to_jsonl(strace_file, jsonl_file, stats)
+
+        # Only the single IPv4 connect is emitted.
+        assert count == 1, f"Expected 1 event, got {count}"
+        # Both IPv6 connects counted exactly once each (unfinished counted once).
+        assert stats["ipv6_connects_skipped"] == 2, stats
+
+        lines = jsonl_file.read_text().strip().split("\n")
+        assert len(lines) == 1
+        assert json.loads(lines[0])["dst_ip"] == "151.101.1.69"
+
+    print("✓ IPv6 connects counted but not captured")
+
+
 if __name__ == "__main__":
     print("Testing strace parser...")
     test_parse_strace_line()
     test_parse_socket_line()
     test_parse_split_connect_line()
     test_parse_to_jsonl()
+    test_ipv6_connects_counted_not_captured()
     print("\nAll tests passed! ✓")
