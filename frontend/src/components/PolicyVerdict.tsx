@@ -72,6 +72,14 @@ export function PolicyVerdict({ policy }: PolicyVerdictProps) {
             Showing {policy.unexpected.length} of {policy.unexpected_count} unexpected destinations.
           </p>
         )}
+
+        {policy.has_domain_rules && (
+          <p className="text-xs text-muted-foreground">
+            Domain rules are advisory — the matched domain is attributed from the traced
+            process's own DNS traffic and could be forged by an evading subject. IP/CIDR
+            rules are the hard gate.
+          </p>
+        )}
       </CardContent>
     </Card>
   )

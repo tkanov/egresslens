@@ -64,6 +64,7 @@ export interface PolicyVerdict {
   enabled: boolean;
   verdict: 'pass' | 'fail';
   allow_rules: number;
+  has_domain_rules: boolean;
   expected_count: number;
   unexpected_count: number;
   unexpected: PolicyUnexpectedDestination[];

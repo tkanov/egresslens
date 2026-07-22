@@ -248,6 +248,12 @@ def test_unexpected_list_capped_but_count_stays_exact():
     assert len(verdict["unexpected"]) == 50
 
 
+def test_has_domain_rules_flag():
+    events = [event("10.0.0.1")]
+    assert evaluate_policy(load_policy({"allow": ["*.x.com"]}), events, {})["has_domain_rules"]
+    assert not evaluate_policy(load_policy({"allow": ["10.0.0.0/8"]}), events, {})["has_domain_rules"]
+
+
 def test_md_escape_neutralizes_table_injection():
     from app.main import _md_escape
     assert _md_escape("evil.com | fake") == "evil.com \\| fake"

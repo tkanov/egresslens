@@ -311,6 +311,9 @@ def evaluate_policy(
         "enabled": True,
         "verdict": "fail" if unexpected else "pass",
         "allow_rules": len(policy.rules),
+        # Whether any rule matched on a (forgeable) domain rather than a hard
+        # ip/CIDR, so the surface can flag a domain-based verdict as advisory.
+        "has_domain_rules": any(rule.domain is not None for rule in policy.rules),
         "expected_count": expected_count,
         "unexpected_count": len(unexpected),
         # Store/return a bounded slice; unexpected_count stays exact.

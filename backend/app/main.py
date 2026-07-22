@@ -515,6 +515,13 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
             f"- **Unexpected destinations:** {policy.get('unexpected_count', 0)}",
             "",
         ])
+        if policy.get("has_domain_rules"):
+            md_lines.extend([
+                "> Domain rules are advisory: the matched domain is attributed from "
+                "the traced process's own DNS traffic and could be forged by an "
+                "evading subject. IP/CIDR rules are the hard gate.",
+                "",
+            ])
         unexpected = policy.get("unexpected", [])
         if unexpected:
             md_lines.extend([
