@@ -7,6 +7,7 @@ import { KPICards } from '@/components/KPICards'
 import { TopDestinations } from '@/components/TopDestinations'
 import { TimelineChart } from '@/components/TimelineChart'
 import { FlagsPanel } from '@/components/FlagsPanel'
+import { PolicyVerdict } from '@/components/PolicyVerdict'
 import { RunDetails } from '@/components/RunDetails'
 
 export function ReportPage() {
@@ -88,6 +89,9 @@ export function ReportPage() {
         )}
 
         <div data-testid="kpi-section"><KPICards summary={report.summary} /></div>
+        {report.summary.policy?.enabled && (
+          <div data-testid="policy-section"><PolicyVerdict policy={report.summary.policy} /></div>
+        )}
         <div data-testid="run-details-section"><RunDetails metadata={report.metadata} /></div>
         <div data-testid="top-destinations-section"><TopDestinations destinations={report.summary.top_destinations} /></div>
         <div data-testid="timeline-section"><TimelineChart events={report.top_events} /></div>

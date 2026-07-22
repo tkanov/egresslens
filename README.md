@@ -57,8 +57,56 @@ Open `http://localhost:5173` and upload:
 - `egresslens-output/egress.jsonl` as the report
 - `egresslens-output/run.json` for metadata
 - `egresslens-output/egress.strace` for domain enrichment
+- an optional `policy.json` allowlist (see [Egress Policy](#egress-policy))
 
 ![Report view](docs/images/report.png)
+
+## Egress Policy
+
+Upload an allowlist alongside a report to turn it into a verdict: every observed
+destination is checked against the policy, and anything that does not match is
+reported as unexpected. The report gets a **PASS/FAIL** verdict, and a failing
+verdict raises a high-severity "Unexpected destinations" flag (also included in
+the markdown export).
+
+The policy is a JSON file with an `allow` list. Each entry is either a shorthand
+string or an object:
+
+```json
+{
+  "allow": [
+    "*.github.com",
+    "pypi.org",
+    "140.82.112.0/20",
+    { "domain": "files.pythonhosted.org" },
+    { "ip": "151.101.0.0/16", "port": 443 }
+  ]
+}
+```
+
+- A **domain** matches exactly (`pypi.org`), or as a leading-wildcard covering
+  subdomains only (`*.github.com` matches `api.github.com`, not the apex or
+  `notgithub.com`).
+- An **ip** is a single address or a CIDR range.
+- An object rule may add a **port**; every field it declares must match.
+
+A destination is expected if an `ip`/CIDR rule covers it, or — when it resolved
+to one or more domains — if **every** observed domain matches a rule. That last
+part fails closed on purpose: a shared IP that served both an allowed and a
+disallowed name is reported as unexpected rather than passing on the allowed one.
+Destinations that could not be named (unresolved IPs) match `ip`/CIDR rules only.
+
+**Trust model.** `ip`/CIDR rules match the real `connect()` destination and are a
+hard gate. `domain` rules match the name attributed during enrichment, which is
+derived from DNS answers seen in the traced process's *own* trace — so code that
+is actively trying to evade the allowlist could forge that attribution. Treat
+`domain` rules as advisory (great for catching accidental or non-adversarial
+egress drift) and use `ip`/CIDR rules where you need a verdict that the traced
+code cannot influence.
+
+The policy verdict is independent of the other flags: an allowlisted destination
+on an uncommon port can still raise the "Unusual ports" flag, so a report may
+show a **PASS** verdict alongside other flags.
 
 ## CLI
 
@@ -103,6 +151,7 @@ The CLI still mounts the app read-only, drops other capabilities, uses `no-new-p
 - IPv4 only. IPv6 connections are counted (reported as `ipv6_connects_skipped`) but their destinations are not captured.
 - Domain enrichment sees UDP DNS A-record answers in `egress.strace`; it does not cover DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, or IPv6.
 - Reverse DNS fallback skips private and non-routable IP ranges and is capped by backend configuration.
+- Policy `domain` rules only match destinations that were named during enrichment, so include `egress.strace` when using them; unresolved IPs can still be covered with `ip`/CIDR rules.
 
 ## License
 

@@ -52,6 +52,24 @@ export interface EnrichmentSummary {
   lookup_errors: number;
 }
 
+export interface PolicyUnexpectedDestination {
+  dst_ip: string;
+  dst_port: number;
+  proto?: string | null;
+  count: number;
+  domain?: string | null;
+}
+
+export interface PolicyVerdict {
+  enabled: boolean;
+  verdict: 'pass' | 'fail';
+  allow_rules: number;
+  has_domain_rules: boolean;
+  expected_count: number;
+  unexpected_count: number;
+  unexpected: PolicyUnexpectedDestination[];
+}
+
 export interface ReportSummary {
   total_events: number;
   unique_ips: number;
@@ -61,6 +79,7 @@ export interface ReportSummary {
   failure_rate: number;
   top_destinations: TopDestination[];
   enrichment?: EnrichmentSummary;
+  policy?: PolicyVerdict;
 }
 
 export interface ReportUploadResponse {
@@ -126,7 +145,8 @@ async function handleResponse<T>(response: Response): Promise<T> {
 export async function uploadReport(
   file: File,
   metadataFile?: File | null,
-  straceFile?: File | null
+  straceFile?: File | null,
+  policyFile?: File | null
 ): Promise<ReportUploadResponse> {
   const formData = new FormData();
   formData.append('file', file);
@@ -135,6 +155,9 @@ export async function uploadReport(
   }
   if (straceFile) {
     formData.append('strace_file', straceFile);
+  }
+  if (policyFile) {
+    formData.append('policy_file', policyFile);
   }
 
   const response = await fetch(`${API_BASE_URL}/api/reports/upload`, {
