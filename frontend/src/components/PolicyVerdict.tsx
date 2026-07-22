@@ -66,6 +66,12 @@ export function PolicyVerdict({ policy }: PolicyVerdictProps) {
             </TableBody>
           </Table>
         )}
+
+        {policy.unexpected_count > policy.unexpected.length && (
+          <p className="text-sm text-muted-foreground">
+            Showing {policy.unexpected.length} of {policy.unexpected_count} unexpected destinations.
+          </p>
+        )}
       </CardContent>
     </Card>
   )

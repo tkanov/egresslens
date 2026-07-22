@@ -90,8 +90,19 @@ string or an object:
 - An **ip** is a single address or a CIDR range.
 - An object rule may add a **port**; every field it declares must match.
 
-A destination is expected if it matches at least one rule. Destinations that
-could not be named (unresolved IPs) match `ip`/CIDR rules only.
+A destination is expected if an `ip`/CIDR rule covers it, or — when it resolved
+to one or more domains — if **every** observed domain matches a rule. That last
+part fails closed on purpose: a shared IP that served both an allowed and a
+disallowed name is reported as unexpected rather than passing on the allowed one.
+Destinations that could not be named (unresolved IPs) match `ip`/CIDR rules only.
+
+**Trust model.** `ip`/CIDR rules match the real `connect()` destination and are a
+hard gate. `domain` rules match the name attributed during enrichment, which is
+derived from DNS answers seen in the traced process's *own* trace — so code that
+is actively trying to evade the allowlist could forge that attribution. Treat
+`domain` rules as advisory (great for catching accidental or non-adversarial
+egress drift) and use `ip`/CIDR rules where you need a verdict that the traced
+code cannot influence.
 
 The policy verdict is independent of the other flags: an allowlisted destination
 on an uncommon port can still raise the "Unusual ports" flag, so a report may
