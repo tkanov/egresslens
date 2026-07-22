@@ -73,15 +73,29 @@ def test_matching_is_case_insensitive():
 def test_shorthand_domain_and_ip_tokens():
     policy = load_policy({"allow": ["*.github.com", "pypi.org", "140.82.112.0/20"]})
     assert len(policy.rules) == 3
-    assert policy.allows("1.2.3.4", 443, "api.github.com")
-    assert policy.allows("140.82.112.5", 443, None)  # inside the CIDR
-    assert not policy.allows("140.82.128.1", 443, None)  # outside the CIDR
+    assert policy.allows("1.2.3.4", 443, ["api.github.com"])
+    assert policy.allows("140.82.112.5", 443, [])  # inside the CIDR, no domain
+    assert not policy.allows("140.82.128.1", 443, [])  # outside the CIDR
 
 
 def test_object_rule_with_port():
     policy = load_policy({"allow": [{"ip": "10.0.0.0/8", "port": 443}]})
-    assert policy.allows("10.1.2.3", 443, None)
-    assert not policy.allows("10.1.2.3", 8080, None)  # wrong port
+    assert policy.allows("10.1.2.3", 443, [])
+    assert not policy.allows("10.1.2.3", 8080, [])  # wrong port
+
+
+def test_object_rule_with_domain_and_port_is_anded():
+    policy = load_policy({"allow": [{"domain": "example.com", "port": 443}]})
+    assert policy.allows("1.2.3.4", 443, ["example.com"])
+    assert not policy.allows("1.2.3.4", 8080, ["example.com"])  # right domain, wrong port
+
+
+def test_domain_path_fails_closed_when_a_candidate_is_unlisted():
+    # A shared IP that serves both an allowed and a disallowed name must NOT pass
+    # just because the allowed one is primary -- otherwise the verdict fails open.
+    policy = load_policy({"allow": ["*.allowed.com"]})
+    assert policy.allows("1.2.3.4", 443, ["cdn.allowed.com"])
+    assert not policy.allows("1.2.3.4", 443, ["cdn.allowed.com", "analytics.tracker.com"])
 
 
 def test_missing_allow_rejected():
@@ -114,6 +128,18 @@ def test_invalid_wildcard_rejected():
         load_policy({"allow": ["*foo.com"]})
     with pytest.raises(PolicyError):
         load_policy({"allow": ["a.*.com"]})
+
+
+def test_malformed_domain_labels_rejected():
+    # Junk that would become a silently never-matching rule must be rejected.
+    for bad in ["-", "---", "a..b", "-a.com", "a-.com"]:
+        with pytest.raises(PolicyError):
+            load_policy({"allow": [bad]})
+
+
+def test_too_many_rules_rejected():
+    with pytest.raises(PolicyError):
+        load_policy({"allow": [f"host{i}.example.com" for i in range(1001)]})
 
 
 def test_bad_ip_rejected():
@@ -195,6 +221,38 @@ def test_unexpected_sorted_by_count_desc():
     policy = load_policy({"allow": ["example.com"]})
     verdict = evaluate_policy(policy, events, {})
     assert [d["dst_ip"] for d in verdict["unexpected"]] == ["3.3.3.3", "2.2.2.2"]
+
+
+def test_evaluate_fails_closed_on_shared_ip_masking():
+    # End-to-end through evaluate_policy: an IP whose primary domain is allowed
+    # but which also served a disallowed name must be reported unexpected.
+    events = [event("1.2.3.4")] * 4
+    doms = {
+        "1.2.3.4": [
+            DomainCandidate(domain="cdn.allowed.com", source="passive_dns", count=3),
+            DomainCandidate(domain="analytics.tracker.com", source="passive_dns", count=1),
+        ]
+    }
+    policy = load_policy({"allow": ["*.allowed.com"]})
+    verdict = evaluate_policy(policy, events, doms)
+    assert verdict["verdict"] == "fail"
+    assert verdict["unexpected_count"] == 1
+    assert verdict["unexpected"][0]["domain"] == "cdn.allowed.com"  # primary, for display
+
+
+def test_unexpected_list_capped_but_count_stays_exact():
+    events = [event(f"203.0.113.{i}") for i in range(60)]  # 60 distinct, none allowed
+    policy = load_policy({"allow": ["10.0.0.0/8"]})
+    verdict = evaluate_policy(policy, events, {})
+    assert verdict["unexpected_count"] == 60
+    assert len(verdict["unexpected"]) == 50
+
+
+def test_md_escape_neutralizes_table_injection():
+    from app.main import _md_escape
+    assert _md_escape("evil.com | fake") == "evil.com \\| fake"
+    assert "\n" not in _md_escape("line1\nline2")
+    assert _md_escape("`code`") == "\\`code\\`"
 
 
 def main():

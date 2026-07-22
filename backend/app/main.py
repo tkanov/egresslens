@@ -1,6 +1,7 @@
 """FastAPI application for EgressLens backend."""
 import uuid
 import json
+import re
 from collections import Counter, defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -98,6 +99,19 @@ def _read_upload(upload: UploadFile, max_bytes: int, label: str) -> bytes:
             detail=f"{label} exceeds the maximum upload size of {max_bytes // (1024 * 1024)} MB",
         )
     return data
+
+
+def _md_escape(value) -> str:
+    """Neutralize attacker-influenced strings before writing them to markdown.
+
+    Domains come from DNS labels observed in the uploaded trace and may contain
+    characters (``|``, newlines, backticks) that would break out of a table cell
+    or inject new structure -- including a forged "Verdict: PASS" line -- into the
+    exported report. Escape the table delimiters and collapse control characters.
+    """
+    text = str(value)
+    text = text.replace("\\", "\\\\").replace("`", "\\`").replace("|", "\\|")
+    return re.sub(r"[\x00-\x1f\x7f]+", " ", text)
 
 
 def compute_aggregates(
@@ -245,13 +259,13 @@ def policy_verdict_flag(policy: Optional[dict]) -> Optional[dict]:
         return None
 
     unexpected = policy.get("unexpected", [])
+    count = policy.get("unexpected_count", len(unexpected))
     labels = [_destination_label(dest) for dest in unexpected[:5]]
     listed = ", ".join(labels)
-    remaining = len(unexpected) - len(labels)
+    remaining = count - len(labels)
     if remaining > 0:
         listed += f", and {remaining} more"
 
-    count = policy.get("unexpected_count", len(unexpected))
     return {
         "name": "Unexpected destinations",
         "description": f"{count} destination(s) not on the allowlist: {listed}",
@@ -343,6 +357,8 @@ def upload_report(
             raise
         except UnicodeDecodeError:
             raise HTTPException(status_code=400, detail="policy file must be UTF-8 encoded")
+        except RecursionError:
+            raise HTTPException(status_code=400, detail="policy JSON is nested too deeply")
         except json.JSONDecodeError as e:
             raise HTTPException(status_code=400, detail=f"Invalid policy JSON: {str(e)}")
         except PolicyError as e:
@@ -378,11 +394,12 @@ def upload_report(
     # Store all parsed events so detail views and exports stay consistent with the summary.
     top_events = events
 
-    # Calculate flags
+    # Calculate flags. A failing egress policy is the most serious finding, so it
+    # goes first (flags render in list order).
     flags = calculate_flags(events, summary)
     policy_flag = policy_verdict_flag(summary.get("policy"))
     if policy_flag:
-        flags.append(policy_flag)
+        flags.insert(0, policy_flag)
 
     # Create report
     report_id = str(uuid.uuid4())
@@ -505,11 +522,16 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
                 "|--------|----|----|----------|-------|",
             ])
             for dest in unexpected:
-                domain = dest.get("domain") or "-"
-                proto = (dest.get("proto") or "-").upper()
+                domain = _md_escape(dest.get("domain") or "-")
+                ip = _md_escape(dest["dst_ip"])
+                proto = _md_escape((dest.get("proto") or "-").upper())
                 md_lines.append(
-                    f"| {domain} | {dest['dst_ip']} | {dest['dst_port']} | {proto} | {dest['count']} |"
+                    f"| {domain} | {ip} | {dest['dst_port']} | {proto} | {dest['count']} |"
                 )
+            shown = len(unexpected)
+            total = policy.get("unexpected_count", shown)
+            if total > shown:
+                md_lines.append(f"_… and {total - shown} more not shown._")
             md_lines.append("")
 
     enrichment_summary = summary.get("enrichment") or {}
@@ -552,9 +574,9 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
         for flag in report.flags:
             severity = flag.get("severity", "unknown")
             md_lines.extend([
-                f"### {flag.get('name', 'Unknown')} ({severity})",
+                f"### {_md_escape(flag.get('name', 'Unknown'))} ({severity})",
                 "",
-                f"{flag.get('description', 'No description')}",
+                _md_escape(flag.get("description", "No description")),
                 "",
             ])
     else:
@@ -575,11 +597,12 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
             "|----|------|----------|-------|--------|--------|",
         ])
         for dest in top_destinations[:20]:  # Show top 20 in export
-            domain = dest.get("domain") or "-"
-            source = dest.get("domain_source") or "-"
-            proto = dest.get("proto", "-")
+            domain = _md_escape(dest.get("domain") or "-")
+            source = _md_escape(dest.get("domain_source") or "-")
+            proto = _md_escape((dest.get("proto") or "-").upper())
+            ip = _md_escape(dest["dst_ip"])
             md_lines.append(
-                f"| {dest['dst_ip']} | {dest['dst_port']} | {proto.upper()} | {dest['count']} | {domain} | {source} |"
+                f"| {ip} | {dest['dst_port']} | {proto} | {dest['count']} | {domain} | {source} |"
             )
         md_lines.append("")
 
@@ -593,7 +616,7 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
         ])
         for event in top_events[:50]:  # Show top 50 events
             md_lines.append(
-                f"| {event.ts} | {event.pid} | {event.dst_ip} | {event.dst_port} | {event.result} |"
+                f"| {event.ts} | {event.pid} | {_md_escape(event.dst_ip)} | {event.dst_port} | {_md_escape(event.result)} |"
             )
         md_lines.append("")
 

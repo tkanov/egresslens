@@ -21,9 +21,14 @@ Policy file format (JSON)::
       ]
     }
 
-A destination is *expected* if it matches at least one allow rule. A rule matches
-only when every field it declares matches, so a bare ``ip`` rule allows any port
-and a bare ``domain`` rule allows any address that resolves to it.
+Trust model: `ip`/CIDR rules match the real ``connect()`` destination and are a
+hard gate. `domain` rules match the domain attributed during enrichment, which
+is derived from DNS answers observed in the traced process's *own* trace, so a
+process actively trying to evade the allowlist could forge that attribution --
+domain rules are advisory against an adversarial subject. To keep the domain
+path from failing *open*, a destination that resolved to one or more domains is
+expected only if **every** observed domain matches a rule; a shared IP serving
+both an allowed and a disallowed name is reported as unexpected.
 """
 from __future__ import annotations
 
@@ -38,10 +43,15 @@ from app.schemas import EventSchema
 
 IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
 
-# Domain labels only ever contain these characters, plus a single leading "*."
-# wildcard that we handle separately. Rejecting anything else keeps a typo from
-# silently becoming a rule that never (or always) matches.
-_DOMAIN_BODY_RE = re.compile(r"[a-z0-9.-]+")
+# Domain labels only ever contain these characters. Rejecting anything else keeps
+# a typo from silently becoming a rule that never (or always) matches.
+_DOMAIN_LABEL_RE = re.compile(r"[a-z0-9-]+")
+
+# Bounds that keep a single upload from pinning a worker thread: evaluation is
+# O(rules * destinations), and the whole unexpected list is stored, returned, and
+# rendered. Files are already size-capped, but that bounds bytes, not counts.
+MAX_RULES = 1000
+MAX_UNEXPECTED = 50
 
 
 class PolicyError(ValueError):
@@ -55,22 +65,30 @@ class AllowRule:
     domain: Optional[str] = None
     network: Optional[IPNetwork] = None
     port: Optional[int] = None
-    source: str = ""
 
-    def matches(self, ip: str, port: int, domain: Optional[str]) -> bool:
-        if self.port is not None and port != self.port:
+    def _port_ok(self, port: int) -> bool:
+        return self.port is None or port == self.port
+
+    def _network_ok(self, ip: str) -> bool:
+        if self.network is None:
+            return True
+        try:
+            return ipaddress.ip_address(ip) in self.network
+        except ValueError:
             return False
-        if self.network is not None:
-            try:
-                address = ipaddress.ip_address(ip)
-            except ValueError:
-                return False
-            if address not in self.network:
-                return False
-        if self.domain is not None:
-            if domain is None or not domain_matches(self.domain, domain):
-                return False
-        return True
+
+    def matches_ip(self, ip: str, port: int) -> bool:
+        """Hard match on the real connection destination (no domain involved)."""
+        return self.network is not None and self._port_ok(port) and self._network_ok(ip)
+
+    def matches_domain(self, domain: str, ip: str, port: int) -> bool:
+        """Match one attributed domain, honouring any ip/port constraints too."""
+        return (
+            self.domain is not None
+            and self._port_ok(port)
+            and self._network_ok(ip)
+            and domain_matches(self.domain, domain)
+        )
 
 
 @dataclass
@@ -79,8 +97,25 @@ class Policy:
 
     rules: List[AllowRule] = field(default_factory=list)
 
-    def allows(self, ip: str, port: int, domain: Optional[str]) -> bool:
-        return any(rule.matches(ip, port, domain) for rule in self.rules)
+    def allows(self, ip: str, port: int, domains: List[str]) -> bool:
+        """Decide whether a destination is expected.
+
+        Expected if a hard IP/CIDR rule covers it, or -- when it resolved to one
+        or more domains -- if *every* observed domain matches a domain rule. An
+        unresolved destination (no domains) can only be allowed by an IP rule.
+        """
+        if any(rule.matches_ip(ip, port) for rule in self.rules if rule.domain is None):
+            return True
+        if not domains:
+            return False
+        return all(
+            any(
+                rule.matches_domain(domain, ip, port)
+                for rule in self.rules
+                if rule.domain is not None
+            )
+            for domain in domains
+        )
 
 
 def domain_matches(pattern: str, domain: str) -> bool:
@@ -110,6 +145,8 @@ def load_policy(data: object) -> Policy:
         raise PolicyError("policy 'allow' must be a list")
     if not allow:
         raise PolicyError("policy 'allow' must contain at least one rule")
+    if len(allow) > MAX_RULES:
+        raise PolicyError(f"policy 'allow' must not exceed {MAX_RULES} rules")
 
     rules = [_parse_rule(entry, index) for index, entry in enumerate(allow)]
     return Policy(rules=rules)
@@ -131,8 +168,8 @@ def _rule_from_token(token: str, where: str) -> AllowRule:
         raise PolicyError(f"{where} is empty")
     network = _try_network(stripped)
     if network is not None:
-        return AllowRule(network=network, source=stripped)
-    return AllowRule(domain=_validate_domain(stripped, where), source=stripped)
+        return AllowRule(network=network)
+    return AllowRule(domain=_validate_domain(stripped, where))
 
 
 def _rule_from_object(obj: dict, where: str) -> AllowRule:
@@ -170,8 +207,7 @@ def _rule_from_object(obj: dict, where: str) -> AllowRule:
             raise PolicyError(f"{where} 'port' must be between 1 and 65535")
         port = port_val
 
-    source = _describe_rule(domain, ip_val if network is not None else None, port)
-    return AllowRule(domain=domain, network=network, port=port, source=source)
+    return AllowRule(domain=domain, network=network, port=port)
 
 
 def _try_network(value: str) -> Optional[IPNetwork]:
@@ -185,37 +221,35 @@ def _validate_domain(value: str, where: str) -> str:
     domain = value.strip().lower().rstrip(".")
     if not domain:
         raise PolicyError(f"{where} domain is empty")
-    body = domain[2:] if domain.startswith("*.") else domain
+    wildcard = domain.startswith("*.")
+    body = domain[2:] if wildcard else domain
     if not body:
         raise PolicyError(f"{where} domain is empty after wildcard")
     if "*" in body:
         raise PolicyError(
             f"{where} domain wildcard is only supported as a leading '*.': {value!r}"
         )
-    if not _DOMAIN_BODY_RE.fullmatch(body):
-        raise PolicyError(f"{where} domain has invalid characters: {value!r}")
+    for label in body.split("."):
+        if not label:
+            raise PolicyError(f"{where} domain has an empty label: {value!r}")
+        if not _DOMAIN_LABEL_RE.fullmatch(label):
+            raise PolicyError(f"{where} domain has invalid characters: {value!r}")
+        if label.startswith("-") or label.endswith("-"):
+            raise PolicyError(f"{where} domain label may not start or end with '-': {value!r}")
     return domain
-
-
-def _describe_rule(domain: Optional[str], ip: Optional[str], port: Optional[int]) -> str:
-    parts = []
-    if domain:
-        parts.append(domain)
-    if ip:
-        parts.append(ip)
-    label = " ".join(parts) if parts else "?"
-    return f"{label}:{port}" if port is not None else label
 
 
 def resolve_destinations(
     events: List[EventSchema],
     domain_candidates: dict,
 ) -> List[dict]:
-    """Collapse events into unique (ip, port) destinations with a primary domain.
+    """Collapse events into unique (ip, port) destinations with attributed domains.
 
     Mirrors the per-destination resolution in compute_aggregates so the verdict
     is consistent with the top-destinations table, but covers *every* destination
-    rather than the displayed top 50.
+    rather than the displayed top 50. Each destination carries a ``domain``
+    (primary, for display) and ``domains`` (all observed names, used to decide the
+    verdict so a shared IP cannot mask a disallowed name).
     """
     dest_counter = Counter((event.dst_ip, event.dst_port) for event in events)
 
@@ -244,6 +278,7 @@ def resolve_destinations(
             "proto": proto_counters[(ip, port)].most_common(1)[0][0],
             "count": count,
             "domain": primary.domain if primary else None,
+            "domains": sorted({candidate.domain for candidate in candidates}),
         })
     return destinations
 
@@ -259,10 +294,16 @@ def evaluate_policy(
     unexpected = []
     expected_count = 0
     for dest in destinations:
-        if policy.allows(dest["dst_ip"], dest["dst_port"], dest["domain"]):
+        if policy.allows(dest["dst_ip"], dest["dst_port"], dest["domains"]):
             expected_count += 1
         else:
-            unexpected.append(dest)
+            unexpected.append({
+                "dst_ip": dest["dst_ip"],
+                "dst_port": dest["dst_port"],
+                "proto": dest["proto"],
+                "count": dest["count"],
+                "domain": dest["domain"],
+            })
 
     unexpected.sort(key=lambda d: (-d["count"], d["dst_ip"], d["dst_port"]))
 
@@ -272,5 +313,6 @@ def evaluate_policy(
         "allow_rules": len(policy.rules),
         "expected_count": expected_count,
         "unexpected_count": len(unexpected),
-        "unexpected": unexpected,
+        # Store/return a bounded slice; unexpected_count stays exact.
+        "unexpected": unexpected[:MAX_UNEXPECTED],
     }
