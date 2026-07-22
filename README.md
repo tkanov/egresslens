@@ -16,6 +16,8 @@ EgressLens runs an app under `strace`, captures IPv4 network syscalls, and produ
 
 The backend can enrich uploaded reports with domains from passive DNS seen in the trace, then bounded reverse DNS for unresolved public IPv4 addresses.
 
+You can also tell EgressLens which destinations an app is expected to reach. Give it an allowlist and it flags anything off the list, with a clear pass/fail verdict on the report. See [Egress Policy](#egress-policy).
+
 ## Quick Start
 
 Requirements: Docker 20.10+, Python 3.9+, and Node.js 18+ for the UI.
