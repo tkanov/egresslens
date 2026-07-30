@@ -10,9 +10,22 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # No update-types filter here, deliberately. backend/requirements.txt holds
+      # version *ranges* rather than pinned versions, so Dependabot raises the
+      # lower bound of a constraint -- a requirement update -- instead of bumping
+      # a pinned version. Requirement updates carry no semver classification, as
+      # their own commit trailers show: the pip PRs record dependency-name and
+      # dependency-type and no update-type at all, while the npm ones (which do
+      # have a lockfile to pin against) record
+      # `update-type: version-update:semver-minor`.
+      #
+      # An update-types filter can only match a classification that is present,
+      # so listing ["minor", "patch"] here excluded every dependency from the
+      # group and each one got its own PR -- seven of them across two runs, which
+      # is the opposite of what the group was added for. Matching on pattern
+      # alone is what actually groups them.
       backend:
         patterns: ["*"]
-        update-types: ["minor", "patch"]
 
   - package-ecosystem: pip
     directory: /cli
