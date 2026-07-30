@@ -249,13 +249,31 @@ def _destination_label(dest: dict) -> str:
 
 
 def policy_verdict_flag(policy: Optional[dict]) -> Optional[dict]:
-    """Turn a failing policy verdict into a high-severity flag, or None.
+    """Turn a non-passing policy verdict into a flag, or None.
 
     Surfacing the verdict as a flag means it renders in the existing UI panel and
     markdown export with no extra plumbing, and marks a failed egress policy as
     the most serious finding in the report.
+
+    An inconclusive verdict is flagged too, at medium: the user supplied an
+    allowlist and got no judgement from it, which is worth saying out loud rather
+    than leaving to look like a quiet success.
     """
-    if not policy or policy.get("verdict") != "fail":
+    if not policy:
+        return None
+
+    if policy.get("verdict") == "inconclusive":
+        return {
+            "name": "Egress policy not evaluated",
+            "description": (
+                "An allowlist was uploaded but no destinations were observed, so "
+                "nothing was checked against it. An empty or failed capture and a "
+                "run that genuinely reached nothing are indistinguishable here."
+            ),
+            "severity": "medium",
+        }
+
+    if policy.get("verdict") != "fail":
         return None
 
     unexpected = policy.get("unexpected", [])
@@ -505,16 +523,29 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
 
     policy = summary.get("policy")
     if policy and policy.get("enabled"):
-        verdict = "PASS" if policy.get("verdict") == "pass" else "FAIL"
+        verdict_key = policy.get("verdict")
+        verdict = {
+            "pass": "PASS",
+            "fail": "FAIL",
+            "inconclusive": "INCONCLUSIVE",
+        }.get(verdict_key, "UNKNOWN")
         md_lines.extend([
             "## Egress Policy",
             "",
             f"- **Verdict:** {verdict}",
+            f"- **Destinations evaluated:** {policy.get('destinations_evaluated', 0)}",
             f"- **Allow rules:** {policy.get('allow_rules', 0)}",
             f"- **Expected destinations:** {policy.get('expected_count', 0)}",
             f"- **Unexpected destinations:** {policy.get('unexpected_count', 0)}",
             "",
         ])
+        if verdict_key == "inconclusive":
+            md_lines.extend([
+                "> No destinations were observed, so nothing was checked against the "
+                "allowlist. This is not a pass: an empty capture, the wrong file, and "
+                "a run that genuinely reached nothing all look the same here.",
+                "",
+            ])
         if policy.get("has_domain_rules"):
             md_lines.extend([
                 "> Domain rules are advisory: the matched domain is attributed from "
@@ -557,20 +588,46 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
     metadata = report.run_metadata or {}
     if metadata:
         command = metadata.get("command")
-        command_text = " ".join(command) if isinstance(command, list) else str(command or "-")
+        command_text = " ".join(str(part) for part in command) if isinstance(command, list) else str(command or "-")
+        # run.json is uploaded, so every field here is caller-controlled and gets
+        # the same escaping as the DNS-derived strings above -- otherwise a
+        # crafted run.json could inject its own "Verdict: PASS" line.
         md_lines.extend([
             "## Run Details",
             "",
-            f"- **Run ID:** `{metadata.get('run_id', '-')}`",
-            f"- **Command:** `{command_text}`",
-            f"- **Exit Code:** {metadata.get('exit_code', '-')}",
-            f"- **Mode:** {metadata.get('mode', '-')}",
-            f"- **Image:** `{metadata.get('image', '-')}`",
-            f"- **Started:** {metadata.get('start_time', '-')}",
-            f"- **Finished:** {metadata.get('end_time', '-')}",
-            f"- **Working Directory:** `{metadata.get('cwd', '-')}`",
+            f"- **Run ID:** `{_md_escape(metadata.get('run_id', '-'))}`",
+            f"- **Command:** `{_md_escape(command_text)}`",
+            f"- **Exit Code:** {_md_escape(metadata.get('exit_code', '-'))}",
+            f"- **Mode:** {_md_escape(metadata.get('mode', '-'))}",
+            f"- **Image:** `{_md_escape(metadata.get('image', '-'))}`",
+            f"- **Started:** {_md_escape(metadata.get('start_time', '-'))}",
+            f"- **Finished:** {_md_escape(metadata.get('end_time', '-'))}",
+            f"- **Working Directory:** `{_md_escape(metadata.get('cwd', '-'))}`",
             "",
         ])
+
+        # Capture counts, including the one signal that says the capture was
+        # incomplete. Without this the IPv6 gap reaches run.json and stops there.
+        counts = metadata.get("counts")
+        counts = counts if isinstance(counts, dict) else {}
+        if counts:
+            md_lines.extend([
+                "### Capture Counts",
+                "",
+                f"- **Events Captured:** {_md_escape(counts.get('total_events', '-'))}",
+                f"- **Unique Destination IPs:** {_md_escape(counts.get('unique_dst_ips', '-'))}",
+                f"- **Unique Destination IP:port Pairs:** {_md_escape(counts.get('unique_dst_ip_ports', '-'))}",
+                f"- **IPv6 Connections Not Captured:** {_md_escape(counts.get('ipv6_connects_skipped', 0))}",
+                "",
+            ])
+            ipv6_skipped = counts.get("ipv6_connects_skipped")
+            if isinstance(ipv6_skipped, int) and ipv6_skipped > 0:
+                md_lines.extend([
+                    f"> {ipv6_skipped} IPv6 connection(s) were observed but their "
+                    "destinations were not captured. They are absent from every table "
+                    "below and cannot raise a policy FAIL.",
+                    "",
+                ])
 
     # Flags
     if report.flags:
@@ -611,6 +668,13 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
             md_lines.append(
                 f"| {ip} | {dest['dst_port']} | {proto} | {dest['count']} | {domain} | {source} |"
             )
+        # Disclose truncation the way the policy table already does. This list is
+        # capped twice: at 50 by compute_aggregates and at 20 here, so compare
+        # against the true total rather than against what was handed to us.
+        shown = min(len(top_destinations), 20)
+        total_destinations = summary.get("unique_destinations", shown)
+        if total_destinations > shown:
+            md_lines.append(f"_… and {total_destinations - shown} more not shown._")
         md_lines.append("")
 
     # Top Events
@@ -625,6 +689,8 @@ def export_report_markdown(report_id: str, db: Session = Depends(get_db)):
             md_lines.append(
                 f"| {event.ts} | {event.pid} | {_md_escape(event.dst_ip)} | {event.dst_port} | {_md_escape(event.result)} |"
             )
+        if len(top_events) > 50:
+            md_lines.append(f"_… and {len(top_events) - 50} more not shown._")
         md_lines.append("")
 
     markdown_content = "\n".join(md_lines)

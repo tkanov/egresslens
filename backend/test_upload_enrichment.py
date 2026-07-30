@@ -173,6 +173,131 @@ def _upload_with_policy(client, policy: str):
     )
 
 
+def test_empty_capture_with_policy_is_inconclusive_not_pass():
+    """A verdict over zero destinations must not render as a green PASS."""
+    try:
+        with make_client() as client:
+            response = client.post(
+                "/api/reports/upload",
+                files={
+                    "file": ("egress.jsonl", "", "application/x-ndjson"),
+                    "policy_file": ("policy.json", '{"allow": ["example.com"]}', "application/json"),
+                },
+            )
+            assert response.status_code == 200, response.text
+            report_id = response.json()["report_id"]
+            report = client.get(f"/api/reports/{report_id}").json()
+
+            policy = report["summary"]["policy"]
+            assert policy["verdict"] == "inconclusive"
+            assert policy["destinations_evaluated"] == 0
+
+            flag = next(f for f in report["flags"] if f["name"] == "Egress policy not evaluated")
+            assert flag["severity"] == "medium"
+
+            md = client.get(f"/api/reports/{report_id}/export.md").text
+            assert "**Verdict:** INCONCLUSIVE" in md
+            assert "nothing was checked against the" in md
+            assert "PASS" not in md
+    finally:
+        main_app.app.dependency_overrides.clear()
+    print("an empty capture with a policy is inconclusive, not a pass")
+
+
+def test_export_discloses_truncated_tables():
+    """The export caps destinations at 20 and events at 50; it must say so."""
+    original_reverse = main_app.settings.enrichment.reverse_dns_enabled
+    main_app.settings.enrichment.reverse_dns_enabled = False
+    try:
+        with make_client() as client:
+            body = "".join(jsonl_event(f"10.0.0.{i}") for i in range(60))
+            response = client.post(
+                "/api/reports/upload",
+                files={"file": ("egress.jsonl", body, "application/x-ndjson")},
+            )
+            assert response.status_code == 200, response.text
+            report_id = response.json()["report_id"]
+
+            report = client.get(f"/api/reports/{report_id}").json()
+            assert report["summary"]["unique_destinations"] == 60
+            # The API itself still caps the table at 50.
+            assert len(report["summary"]["top_destinations"]) == 50
+
+            md = client.get(f"/api/reports/{report_id}/export.md").text
+            # 60 observed, 20 rendered.
+            assert "_… and 40 more not shown._" in md
+            # 60 events, 50 rendered.
+            assert "_… and 10 more not shown._" in md
+    finally:
+        main_app.settings.enrichment.reverse_dns_enabled = original_reverse
+        main_app.app.dependency_overrides.clear()
+    print("export discloses both truncated tables")
+
+
+def test_export_renders_capture_counts_and_ipv6_gap():
+    """ipv6_connects_skipped must reach the report, not stop at run.json."""
+    original_reverse = main_app.settings.enrichment.reverse_dns_enabled
+    main_app.settings.enrichment.reverse_dns_enabled = False
+    try:
+        with make_client() as client:
+            run_json = json.dumps({
+                "run_id": "abc",
+                "command": ["python", "app.py"],
+                "counts": {
+                    "total_events": 1,
+                    "unique_dst_ips": 1,
+                    "unique_dst_ip_ports": 1,
+                    "ipv6_connects_skipped": 3,
+                },
+            })
+            response = client.post(
+                "/api/reports/upload",
+                files={
+                    "file": ("egress.jsonl", jsonl_event("93.184.216.34"), "application/x-ndjson"),
+                    "metadata_file": ("run.json", run_json, "application/json"),
+                },
+            )
+            assert response.status_code == 200, response.text
+            md = client.get(f"/api/reports/{response.json()['report_id']}/export.md").text
+
+            assert "### Capture Counts" in md
+            assert "**IPv6 Connections Not Captured:** 3" in md
+            assert "cannot raise a policy FAIL" in md
+    finally:
+        main_app.settings.enrichment.reverse_dns_enabled = original_reverse
+        main_app.app.dependency_overrides.clear()
+    print("export surfaces capture counts and the IPv6 gap")
+
+
+def test_export_escapes_run_metadata():
+    """run.json is uploaded, so it must not be able to forge export structure."""
+    original_reverse = main_app.settings.enrichment.reverse_dns_enabled
+    main_app.settings.enrichment.reverse_dns_enabled = False
+    try:
+        with make_client() as client:
+            run_json = json.dumps({
+                "image": "evil\n- **Verdict:** PASS\n",
+                "mode": "a|b",
+            })
+            response = client.post(
+                "/api/reports/upload",
+                files={
+                    "file": ("egress.jsonl", jsonl_event("93.184.216.34"), "application/x-ndjson"),
+                    "metadata_file": ("run.json", run_json, "application/json"),
+                },
+            )
+            assert response.status_code == 200, response.text
+            md = client.get(f"/api/reports/{response.json()['report_id']}/export.md").text
+
+            # The injected line must not survive as its own markdown list item.
+            assert "\n- **Verdict:** PASS" not in md
+            assert "a\\|b" in md
+    finally:
+        main_app.settings.enrichment.reverse_dns_enabled = original_reverse
+        main_app.app.dependency_overrides.clear()
+    print("run metadata is escaped in the export")
+
+
 def test_policy_pass_records_verdict_without_flag():
     original_reverse = main_app.settings.enrichment.reverse_dns_enabled
     main_app.settings.enrichment.reverse_dns_enabled = False
@@ -284,6 +409,10 @@ def main():
     test_policy_fail_raises_high_severity_flag()
     test_malformed_policy_is_rejected()
     test_policy_section_in_markdown_export()
+    test_empty_capture_with_policy_is_inconclusive_not_pass()
+    test_export_discloses_truncated_tables()
+    test_export_renders_capture_counts_and_ipv6_gap()
+    test_export_escapes_run_metadata()
     test_pass_verdict_coexists_with_unusual_ports_flag()
     print("all upload enrichment tests passed")
 

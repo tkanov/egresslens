@@ -19,11 +19,20 @@ export function KPICards({ summary }: KPICardsProps) {
       icon: '🌐',
       accent: 'border-green-200 bg-green-50/50 dark:bg-green-950/20 border-2'
     },
-    { 
-      label: 'Unique ports', 
+    {
+      label: 'Unique ports',
       value: summary.unique_ports,
       icon: '🔌',
       accent: 'border-purple-200 bg-purple-50/50 dark:bg-purple-950/20'
+    },
+    // The true destination total. The top-destinations table is capped at 50 by
+    // the backend, so without this number on the page a reader has nothing to
+    // infer the truncation from.
+    {
+      label: 'Unique destinations',
+      value: summary.unique_destinations,
+      icon: '🎯',
+      accent: 'border-amber-200 bg-amber-50/50 dark:bg-amber-950/20'
     },
     { 
       label: 'Failures', 
@@ -35,7 +44,7 @@ export function KPICards({ summary }: KPICardsProps) {
     },
   ]
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       {cards.map(({ label, value, icon, accent }) => (
         <Card key={label} className={accent}>
           <CardHeader className="pb-2">

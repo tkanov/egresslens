@@ -288,7 +288,13 @@ def evaluate_policy(
     events: List[EventSchema],
     domain_candidates: dict,
 ) -> dict:
-    """Judge every observed destination against the policy and return a verdict."""
+    """Judge every observed destination against the policy and return a verdict.
+
+    The verdict is ``pass``, ``fail``, or ``inconclusive`` -- the last when there
+    was nothing to judge. ``destinations_evaluated`` reports how many
+    destinations the verdict actually covers, so a consumer can tell a compliant
+    run from an empty one.
+    """
     destinations = resolve_destinations(events, domain_candidates)
 
     unexpected = []
@@ -307,9 +313,21 @@ def evaluate_policy(
 
     unexpected.sort(key=lambda d: (-d["count"], d["dst_ip"], d["dst_port"]))
 
+    # Three-way on purpose. With no observed destinations the allowlist was never
+    # exercised, so "pass" would be a vacuous truth reported as a security
+    # result: a failed capture, the wrong file uploaded, and a genuinely quiet
+    # run are indistinguishable here. Say so instead of asserting compliance.
+    if not destinations:
+        verdict = "inconclusive"
+    elif unexpected:
+        verdict = "fail"
+    else:
+        verdict = "pass"
+
     return {
         "enabled": True,
-        "verdict": "fail" if unexpected else "pass",
+        "verdict": verdict,
+        "destinations_evaluated": len(destinations),
         "allow_rules": len(policy.rules),
         # Whether any rule matched on a (forgeable) domain rather than a hard
         # ip/CIDR, so the surface can flag a domain-based verdict as advisory.
