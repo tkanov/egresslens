@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""Tests for the Docker/strace runner.
+
+docker_runner.py is the component that decides what actually gets traced and how
+much isolation the traced code loses, and it had no tests at all -- so neither
+the strace flags the backend depends on nor the container hardening flags were
+pinned by anything. These tests cover command construction only; they never talk
+to a Docker daemon.
+"""
+
+import shlex
+import subprocess
+from types import SimpleNamespace
+
+import pytest
+
+from egresslens import docker_runner
+from egresslens.docker_runner import (
+    DEFAULT_IMAGE,
+    STRACE_STRING_LIMIT,
+    DockerRunner,
+    run_python_app,
+)
+
+
+@pytest.fixture(autouse=True)
+def force_subprocess_path(monkeypatch):
+    """Make every test in this module take the docker-CLI path, deterministically.
+
+    Necessary, not cosmetic: run_python_app and run_docker_command construct their
+    own DockerRunner, so on any machine with the Docker SDK installed and a
+    reachable daemon -- every CI runner, now that the [docker] extra is installed
+    -- they would take the SDK branch and try to start a real container instead of
+    hitting the faked subprocess. Patching the flag also means docker.from_env()
+    is never called, so nothing here probes a daemon at all.
+    """
+    monkeypatch.setattr(docker_runner, "DOCKER_SDK_AVAILABLE", False)
+
+
+def subprocess_runner(image: str = DEFAULT_IMAGE) -> DockerRunner:
+    """A runner on the subprocess path (see the autouse fixture above)."""
+    runner = DockerRunner(image=image)
+    assert runner.client is None, "expected the SDK path to be disabled"
+    return runner
+
+
+def inner_command(strace_cmd: list) -> list:
+    """Recover the traced argv from the nested `sh -c` in a strace invocation.
+
+    The inner script is `<argv> > /output/cmd_stdout 2> /output/cmd_stderr`, so
+    the redirections are dropped to leave just the command being traced.
+    """
+    assert strace_cmd[0] == "sh"
+    assert strace_cmd[1] == "-c"
+    outer_tokens = shlex.split(strace_cmd[2])
+    # ... -- sh -c '<inner>' && sync
+    inner_script = outer_tokens[outer_tokens.index("--") + 3]
+
+    argv = []
+    for token in shlex.split(inner_script):
+        if token.startswith(">") or token.endswith(">"):
+            break
+        argv.append(token)
+    return argv
+
+
+# --- strace invocation: the backend depends on these flags ---------------------
+
+def test_strace_flags_match_what_the_backend_parses():
+    container_path, cmd = subprocess_runner()._build_strace_cmd(["python", "app.py"])
+    script = cmd[2]
+
+    assert container_path == "/output/egress.strace"
+    # -f follows forks (pip and the app are separate processes); -ttt gives the
+    # epoch timestamps the parser reads; trace=network is the syscall class that
+    # includes connect and the send*/recv* family.
+    assert "strace -f -ttt -e trace=network" in script
+    assert f"-s {STRACE_STRING_LIMIT}" in script
+    assert "-o /output/egress.strace" in script
+
+
+def test_strace_string_limit_is_large_enough_for_a_dns_response():
+    """The backend derives passive DNS from captured recvfrom/recvmsg buffers.
+
+    512 bytes is the classic UDP DNS payload limit and EDNS0 goes past it, so a
+    -s below that silently truncates answers and drops domain enrichment without
+    any error. Pinned so it cannot be lowered unnoticed.
+    """
+    assert STRACE_STRING_LIMIT >= 4096
+
+
+def test_traced_command_survives_shell_quoting():
+    argv = ["python", "app.py", "--name", "two words", "semi;colon", "$(whoami)"]
+    _, cmd = subprocess_runner()._build_strace_cmd(argv)
+    assert inner_command(cmd)[: len(argv)] == argv
+
+
+def test_command_stdout_and_stderr_are_captured_to_output():
+    _, cmd = subprocess_runner()._build_strace_cmd(["python", "app.py"])
+    assert "/output/cmd_stdout" in cmd[2]
+    assert "/output/cmd_stderr" in cmd[2]
+
+
+# --- container hardening: reduced isolation, so pin what is compensating -------
+
+def fake_subprocess(monkeypatch, image_present=True, exit_code="0"):
+    """Replace subprocess.run with a recorder that fakes the docker CLI."""
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(list(cmd))
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            return SimpleNamespace(returncode=0 if image_present else 1, stdout="", stderr="")
+        if len(cmd) > 1 and cmd[1] == "run":
+            return SimpleNamespace(returncode=0, stdout="container123\n", stderr="")
+        if len(cmd) > 1 and cmd[1] == "inspect":
+            return SimpleNamespace(returncode=0, stdout=f"{exit_code}\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(docker_runner.subprocess, "run", run)
+    return calls
+
+
+def docker_run_argv(calls: list) -> list:
+    return next(cmd for cmd in calls if len(cmd) > 1 and cmd[1] == "run")
+
+
+def test_container_runs_with_compensating_hardening(monkeypatch, tmp_path):
+    calls = fake_subprocess(monkeypatch)
+    strace_path = tmp_path / "out" / "egress.strace"
+
+    exit_code, error = subprocess_runner().run_with_strace(
+        ["python", "app.py"], tmp_path / "work", strace_path
+    )
+
+    assert (exit_code, error) == (0, None)
+    argv = docker_run_argv(calls)
+
+    # Tracing needs SYS_PTRACE and an unconfined seccomp profile; everything else
+    # is dropped to compensate. Documented in README "Security Model".
+    assert ["--cap-add", "SYS_PTRACE"] == argv[argv.index("--cap-add"):][:2]
+    assert ["--cap-drop", "ALL"] == argv[argv.index("--cap-drop"):][:2]
+    assert "--read-only" in argv
+    assert "no-new-privileges" in argv
+    assert "seccomp=unconfined" in argv
+
+    # The app directory is mounted read-only; only /output is writable.
+    assert f"{(tmp_path / 'work').absolute()}:/work:ro" in argv
+    assert f"{strace_path.parent.absolute()}:/output:rw" in argv
+
+
+def test_strace_file_is_created_even_when_the_container_wrote_nothing(monkeypatch, tmp_path):
+    fake_subprocess(monkeypatch)
+    strace_path = tmp_path / "out" / "egress.strace"
+
+    subprocess_runner().run_with_strace(["python", "app.py"], tmp_path, strace_path)
+
+    # Downstream parsing expects the file to exist rather than to be handled as a
+    # special case in every caller.
+    assert strace_path.exists()
+
+
+def test_nonzero_container_exit_code_is_reported(monkeypatch, tmp_path):
+    fake_subprocess(monkeypatch, exit_code="42")
+    exit_code, error = subprocess_runner().run_with_strace(
+        ["python", "app.py"], tmp_path, tmp_path / "egress.strace"
+    )
+    assert exit_code == 42
+    assert error is None
+
+
+def test_missing_default_image_explains_how_to_build_it(monkeypatch, tmp_path):
+    fake_subprocess(monkeypatch, image_present=False)
+    exit_code, error = subprocess_runner().run_with_strace(
+        ["python", "app.py"], tmp_path, tmp_path / "egress.strace"
+    )
+    assert exit_code == 1
+    assert error is not None
+    assert DEFAULT_IMAGE in error
+    assert "docker build" in error
+
+
+def test_custom_image_is_not_probed_for_the_default_hint(monkeypatch, tmp_path):
+    """Only the default image gets the build hint; a custom one is the user's job."""
+    calls = fake_subprocess(monkeypatch, image_present=False)
+    exit_code, error = subprocess_runner(image="my/own:tag").run_with_strace(
+        ["python", "app.py"], tmp_path, tmp_path / "egress.strace"
+    )
+    assert (exit_code, error) == (0, None)
+    assert not any(cmd[:3] == ["docker", "image", "inspect"] for cmd in calls)
+    assert "my/own:tag" in docker_run_argv(calls)
+
+
+# --- run_python_app: how a Python project is turned into a command -------------
+
+def test_plain_entry_point_runs_the_file(monkeypatch, tmp_path):
+    calls = fake_subprocess(monkeypatch)
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+
+    run_python_app(
+        app_path=app_dir,
+        entry_point="app.py",
+        app_args=["dns", "example.com"],
+        has_requirements=False,
+        image=DEFAULT_IMAGE,
+        strace_output_path=tmp_path / "egress.strace",
+    )
+
+    argv = docker_run_argv(calls)
+    traced = inner_command(argv[argv.index(DEFAULT_IMAGE) + 1:])
+    assert traced == ["python", "app.py", "dns", "example.com"]
+
+
+def test_requirements_are_installed_before_the_app_runs(monkeypatch, tmp_path):
+    calls = fake_subprocess(monkeypatch)
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+
+    run_python_app(
+        app_path=app_dir,
+        entry_point="main.py",
+        app_args=[],
+        has_requirements=True,
+        image=DEFAULT_IMAGE,
+        strace_output_path=tmp_path / "egress.strace",
+    )
+
+    argv = docker_run_argv(calls)
+    script = " ".join(argv[argv.index(DEFAULT_IMAGE) + 1:])
+    # The container filesystem is read-only, so packages go to the /tmp tmpfs and
+    # PYTHONPATH points at them. --break-system-packages is for PEP 668.
+    assert "pip install" in script
+    assert "--target=/tmp/pypackages" in script
+    assert "--break-system-packages" in script
+    assert "PYTHONPATH=/tmp/pypackages" in script
+    assert "-r requirements.txt" in script
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Known bug: for a __main__.py entry point the runner builds "
+        "`python -m <basename of app dir>` while the working directory IS that "
+        "directory, so the module is never on sys.path under that name and the "
+        "run fails with ModuleNotFoundError. __main__.py is checked FIRST by "
+        "discover_entry_point, so the canonical runnable-package layout is the "
+        "one that breaks. Remove this marker when the command is fixed."
+    ),
+)
+def test_main_module_entry_point_is_runnable(monkeypatch, tmp_path):
+    calls = fake_subprocess(monkeypatch)
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+
+    run_python_app(
+        app_path=app_dir,
+        entry_point="__main__.py",
+        app_args=[],
+        has_requirements=False,
+        image=DEFAULT_IMAGE,
+        strace_output_path=tmp_path / "egress.strace",
+    )
+
+    argv = docker_run_argv(calls)
+    traced = inner_command(argv[argv.index(DEFAULT_IMAGE) + 1:])
+    # Working directory is /work, which is the app directory itself, so the
+    # package name is not importable. `python .` and `python __main__.py` both
+    # work; `python -m myapp` does not.
+    assert traced in (["python", "."], ["python", "__main__.py"])
+
+
+def main():
+    raise SystemExit(subprocess.call(["pytest", "-v", __file__]))
+
+
+if __name__ == "__main__":
+    main()

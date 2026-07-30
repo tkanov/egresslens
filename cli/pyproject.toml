@@ -27,6 +27,14 @@ dependencies = [
     "click>=8.0.0",
 ]
 
+[project.optional-dependencies]
+# The Docker SDK path in egresslens.docker_runner is genuinely optional -- without
+# the SDK the runner shells out to the `docker` CLI instead. cli/requirements.txt
+# has always declared this, but pyproject did not, so `pip install -e cli/` (the
+# documented install) never pulled it in and the SDK branch never executed, in CI
+# or locally.
+docker = ["docker>=6.0.0"]
+
 [project.scripts]
 egresslens = "egresslens.main:main"
 

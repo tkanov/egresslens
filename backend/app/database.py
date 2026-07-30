@@ -1,6 +1,6 @@
 """Database initialization and session management."""
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker
 from app.models import Base
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./egresslens.db"

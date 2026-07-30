@@ -1,7 +1,8 @@
 """FastAPI application for EgressLens backend."""
-import uuid
 import json
+import os
 import re
+import uuid
 from collections import Counter, defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -39,7 +40,6 @@ app = FastAPI(
 # CORS middleware
 # Allow requests from Vite dev server and common forwarded ports
 # For dev containers with custom forwarded ports, set ALLOWED_ORIGINS env var
-import os
 allowed_origins = [
     "http://localhost:5173",
     "http://localhost:3000",
