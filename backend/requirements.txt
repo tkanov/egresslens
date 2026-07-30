@@ -1,7 +1,15 @@
-fastapi
-uvicorn
-sqlalchemy
-pydantic
-python-multipart
-pyyaml
-httpx
+# Bounded rather than exact-pinned: a lower bound at versions this code is known
+# to work against, and an upper bound at the next major so an upstream breaking
+# release cannot fail `main` with no change in this repo. These were seven bare
+# package names against a 3.9-3.12 CI matrix.
+#
+# Bump deliberately; Dependabot opens the PRs (see .github/dependabot.yml).
+fastapi>=0.115,<1.0
+uvicorn>=0.30,<1.0
+sqlalchemy>=2.0,<3.0
+pydantic>=2.7,<3.0
+python-multipart>=0.0.9,<0.1
+pyyaml>=6.0,<7.0
+
+# Required at runtime by fastapi.testclient, which the backend tests use.
+httpx>=0.27,<1.0

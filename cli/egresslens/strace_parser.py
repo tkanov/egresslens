@@ -1,4 +1,9 @@
-"""Parser for strace output to extract network connection events."""
+"""Parser for strace output to extract outbound network events.
+
+Two kinds of syscall name an egress destination: connect(), and the send*
+family when the socket is unconnected. Both are parsed here so a report covers
+datagram egress that never calls connect().
+"""
 
 import json
 import re
@@ -8,6 +13,48 @@ from typing import Iterator, Optional
 
 SocketState = dict[tuple[int, int], str]
 PendingConnectState = dict[int, dict]
+PendingSendState = dict[int, list]
+
+# Syscalls in strace's `network` class that carry an explicit destination
+# sockaddr. connect() covers the connection-oriented case; the send* family
+# names its destination per-call whenever the socket is unconnected, which is how
+# a lot of real UDP egress leaves a process -- dnspython resolves via sendto()
+# and never calls connect(), and statsd, syslog-over-UDP, NTP and QUIC stacks
+# behave the same way. Parsing connect() alone made that egress invisible in
+# egress.jsonl even though the addresses were sitting in egress.strace.
+SEND_SYSCALLS = ("sendto", "sendmsg", "sendmmsg")
+
+_SEND_SYSCALL_RE = re.compile(
+    r"(\d+)\s+([\d.]+)\s+(" + "|".join(SEND_SYSCALLS) + r")\((\d+)"
+)
+
+# One AF_INET sockaddr. Restricted to the innermost brace group ([^{}]) so the
+# msg_name={...} nested inside sendmsg's msghdr matches without swallowing the
+# structure around it, and so sendmmsg's array yields one match per message.
+# The trailing comma after AF_INET is what keeps this from also matching AF_INET6.
+_SOCKADDR_IN_RE = re.compile(
+    r"\{[^{}]*sa_family=AF_INET,[^{}]*sin_port=htons\((\d+)\)[^{}]*"
+    r"sin_addr=inet_addr\(\"([^\"]+)\"\)[^{}]*\}"
+)
+
+# Trailing return value of a completed call, tolerant of strace's errno
+# description:  ) = 29  |  ) = -1 EPERM  |  ) = -1 EPERM (Operation not permitted)
+#
+# Anchored at end of line AND required to follow the syscall's closing paren.
+# Both halves matter. Anchoring stops a `= 0` early in a captured payload from
+# being read as the result; requiring the paren stops a payload that *ends* the
+# line from doing the same. That second case is reachable: sendmsg prints
+# msg_name before msg_iov, so a trace truncated mid-payload -- a killed
+# container, or the `&& sync` in docker_runner being skipped because the traced
+# app exited non-zero -- leaves a valid sockaddr with payload text at the line
+# end. Such a line yields no event rather than an event with a fabricated result.
+_SEND_RESULT_RE = re.compile(
+    r"\)\s*=\s*(-?\d+)(?:\s+([A-Z][A-Z0-9_]*))?(?:\s+\([^)]*\))?\s*$"
+)
+
+_RESUMED_SEND_RE = re.compile(
+    r"(\d+)\s+[\d.]+\s+<\.\.\. (?:" + "|".join(SEND_SYSCALLS) + r") resumed>"
+)
 
 
 def parse_socket_line(line: str) -> Optional[tuple[int, int, str]]:
@@ -60,7 +107,10 @@ def is_ipv6_connect_line(line: str) -> bool:
 
 
 def parse_strace_file(strace_path: Path, stats: Optional[dict] = None) -> Iterator[dict]:
-    """Parse strace output file and yield connection events.
+    """Parse strace output file and yield egress events.
+
+    Covers connect() plus the send* syscalls that carry their own destination
+    sockaddr, so egress over unconnected UDP is reported rather than dropped.
 
     Args:
         strace_path: Path to strace output file
@@ -73,6 +123,7 @@ def parse_strace_file(strace_path: Path, stats: Optional[dict] = None) -> Iterat
     """
     socket_state: SocketState = {}
     pending_connects: PendingConnectState = {}
+    pending_sends: PendingSendState = {}
     ipv6_connects_skipped = 0
 
     with open(strace_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -101,6 +152,28 @@ def parse_strace_file(strace_path: Path, stats: Optional[dict] = None) -> Iterat
                     yield event
                 continue
 
+            pending_send = parse_unfinished_send_line(line, socket_state)
+            if pending_send:
+                pid, send_events = pending_send
+                pending_sends[pid] = send_events
+                continue
+
+            resumed_send = parse_resumed_send_line(line)
+            if resumed_send:
+                pid, result_code, errno = resumed_send
+                send_events = pending_sends.pop(pid, None)
+                for event in send_events or []:
+                    event["result"] = "ok" if result_code >= 0 else "error"
+                    event["errno"] = errno
+                    yield event
+                continue
+
+            parsed_send = parse_send_line(line, socket_state)
+            if parsed_send:
+                for event in parsed_send[1]:
+                    yield event
+                continue
+
             event = parse_strace_line(line, socket_state)
             if event:
                 yield event
@@ -116,8 +189,14 @@ def build_connect_event(
     dst_port: int,
     dst_ip: str,
     socket_state: Optional[SocketState] = None,
+    event: str = "connect",
 ) -> dict:
-    """Build a connection event with protocol from socket state when available."""
+    """Build an egress event with protocol from socket state when available.
+
+    ``event`` records which syscall named the destination -- ``connect`` for the
+    connection-oriented path, or the send* syscall name for a datagram whose
+    address was supplied per-call.
+    """
     proto = "unknown"
     if socket_state:
         proto = socket_state.get((pid, fd), "unknown")
@@ -125,7 +204,7 @@ def build_connect_event(
     return {
         "ts": timestamp,
         "pid": pid,
-        "event": "connect",
+        "event": event,
         "family": "inet",
         "proto": proto,
         "dst_ip": dst_ip,
@@ -210,6 +289,94 @@ def parse_resumed_connect_line(line: str) -> Optional[tuple[int, int, Optional[s
     pid = int(match.group(1))
     result_code = int(match.group(2))
     errno = match.group(3) if match.group(3) else None
+    return pid, result_code, errno
+
+
+def _send_destinations(
+    line: str,
+    socket_state: Optional[SocketState] = None,
+) -> Optional[tuple[int, list]]:
+    """Build an event for every AF_INET destination named on a send*() line.
+
+    sendto() names one destination, sendmsg() names one via ``msg_name``, and
+    sendmmsg() names one per message in its array -- hence a list. A send on a
+    *connected* socket prints ``NULL`` for the address and yields nothing here,
+    which is correct: that traffic is already reported via the socket's
+    connect() event, so there is no double counting.
+    """
+    match = _SEND_SYSCALL_RE.search(line)
+    if not match:
+        return None
+
+    pid = int(match.group(1))
+    timestamp = float(match.group(2))
+    syscall = match.group(3)
+    fd = int(match.group(4))
+
+    events = [
+        build_connect_event(
+            pid, timestamp, fd, int(port), ip, socket_state, event=syscall
+        )
+        for port, ip in _SOCKADDR_IN_RE.findall(line)
+    ]
+    if not events:
+        return None
+    return pid, events
+
+
+def parse_send_line(
+    line: str,
+    socket_state: Optional[SocketState] = None,
+) -> Optional[tuple[int, list]]:
+    """Parse a completed send*() syscall that named its own destination."""
+    if "<unfinished ...>" in line:
+        return None
+
+    result_match = _SEND_RESULT_RE.search(line)
+    if not result_match:
+        return None
+
+    parsed = _send_destinations(line, socket_state)
+    if not parsed:
+        return None
+
+    pid, events = parsed
+    result_code = int(result_match.group(1))
+    errno = result_match.group(2)
+    for event in events:
+        # send* returns the byte/message count on success, not 0 like connect().
+        event["result"] = "ok" if result_code >= 0 else "error"
+        event["errno"] = errno
+    return pid, events
+
+
+def parse_unfinished_send_line(
+    line: str,
+    socket_state: Optional[SocketState] = None,
+) -> Optional[tuple[int, list]]:
+    """Parse a send*() line split by strace as unfinished.
+
+    strace decodes the arguments on syscall entry, so the destination is present
+    on this line; only the result has to wait for the matching resumed line.
+    """
+    if "<unfinished ...>" not in line:
+        return None
+    return _send_destinations(line, socket_state)
+
+
+def parse_resumed_send_line(line: str) -> Optional[tuple[int, int, Optional[str]]]:
+    """Parse a strace line that resumes a previously unfinished send*()."""
+    match = _RESUMED_SEND_RE.search(line)
+    if not match:
+        return None
+
+    result_match = _SEND_RESULT_RE.search(line)
+    if not result_match:
+        return None
+
+    pid = int(match.group(1))
+    result_code = int(result_match.group(1))
+    errno = result_match.group(2)
     return pid, result_code, errno
 
 

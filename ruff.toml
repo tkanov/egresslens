@@ -1,0 +1,26 @@
+# Ruff configuration for the Python parts of the repo (backend/, cli/, sample_app/).
+#
+# Rule selection is deliberately ruff's default set: pycodestyle errors that
+# matter (E4 imports, E7 statements, E9 syntax/IO) plus pyflakes (F), which is
+# what catches unused imports, undefined names, and f-strings with no
+# placeholders. That set is currently clean.
+#
+# Broader families are deferred rather than rejected -- measured against this
+# tree, adding E5 (line length) reports 100 more, and B/UP/I/C4/SIM another 86.
+# None of those are bugs, and turning them on belongs in its own change so the
+# diff is reviewable.
+target-version = "py39"
+line-length = 100
+
+exclude = [
+    ".venv",
+    "venv",
+    "frontend",
+    "build",
+    "dist",
+    "egresslens-output",
+    "demo-output",
+]
+
+[lint]
+select = ["E4", "E7", "E9", "F"]

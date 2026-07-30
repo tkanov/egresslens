@@ -1,7 +1,8 @@
 """FastAPI application for EgressLens backend."""
-import uuid
 import json
+import os
 import re
+import uuid
 from collections import Counter, defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -15,10 +16,10 @@ from app.models import Report
 from app.schemas import EventSchema, ReportUploadResponse, ReportResponse
 from app.config import settings
 from app.enrichment import (
-    DomainCandidate,
     choose_primary_domain,
     empty_enrichment_summary,
     enrich_events,
+    event_domain_candidates,
 )
 from app.policy import PolicyError, evaluate_policy, load_policy
 
@@ -39,7 +40,6 @@ app = FastAPI(
 # CORS middleware
 # Allow requests from Vite dev server and common forwarded ports
 # For dev containers with custom forwarded ports, set ALLOWED_ORIGINS env var
-import os
 allowed_origins = [
     "http://localhost:5173",
     "http://localhost:3000",
@@ -151,24 +151,16 @@ def compute_aggregates(
         key: counter.most_common(1)[0][0] for key, counter in proto_counters.items()
     }
 
+    # Shares the one-pass helper with policy.evaluate_policy. The rescan this
+    # replaces was bounded here by most_common(50) so it cost 50*N rather than
+    # the policy path's destinations*N, but it was the same latent defect.
+    event_candidates = event_domain_candidates(events)
+
     top_destinations = []
     for (ip, port), count in dest_counter.most_common(50):
-        candidates = list(domain_candidates.get(ip, []))
-        if not candidates:
-            event_domain_counts = Counter(
-                (event.domain, event.domain_source)
-                for event in events
-                if event.dst_ip == ip and event.domain
-            )
-            candidates = [
-                DomainCandidate(
-                    domain=domain,
-                    source=source,
-                    count=candidate_count,
-                )
-                for (domain, source), candidate_count in event_domain_counts.items()
-                if source
-            ]
+        # An empty list from enrichment falls through to the event fallback, as
+        # a missing key does.
+        candidates = list(domain_candidates.get(ip) or event_candidates.get(ip, []))
 
         primary = choose_primary_domain(candidates) if candidates else None
         top_destinations.append({

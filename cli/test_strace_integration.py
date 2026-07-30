@@ -9,6 +9,8 @@ import tempfile
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from egresslens.strace_parser import parse_to_jsonl
 
 
@@ -65,12 +67,18 @@ def failure_context(strace_path: Path, events: list[dict]) -> str:
     )
 
 
-def test_real_strace_protocol_detection() -> None:
-    """Run real strace and verify socket-derived TCP/UDP protocol labels."""
-    if not shutil.which("strace"):
-        print("⊘ Skipping real strace integration test (strace not found)")
-        return
+HAVE_STRACE = shutil.which("strace") is not None
 
+
+@pytest.mark.skipif(not HAVE_STRACE, reason="strace is not installed on this host")
+def test_real_strace_protocol_detection() -> None:
+    """Run real strace and verify socket-derived TCP/UDP protocol labels.
+
+    Marked skipif rather than returning early. The previous version printed a
+    notice and returned, which pytest reports as PASSED -- a green result that
+    asserted nothing, with no SKIPPED count to hint at it. macOS has no strace,
+    so on a developer machine this was the normal outcome.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
         program_path = tmp_path / "trace_target.py"
@@ -124,5 +132,8 @@ def test_real_strace_protocol_detection() -> None:
 
 if __name__ == "__main__":
     print("Testing real strace parser integration...")
+    if not HAVE_STRACE:
+        print("⊘ strace is not installed on this host -- nothing was verified")
+        raise SystemExit(0)
     test_real_strace_protocol_detection()
     print("\nIntegration test passed! ✓")

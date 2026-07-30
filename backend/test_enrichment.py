@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Tests for backend domain enrichment."""
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -11,7 +10,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 import socket
 
 from app.config import load_config
-from app.enrichment import enrich_events, parse_passive_dns, reverse_lookup
+from app.enrichment import (
+    enrich_events,
+    event_domain_candidates,
+    parse_passive_dns,
+    reverse_lookup,
+)
 from app.schemas import EventSchema
 
 
@@ -225,6 +229,73 @@ def test_config_defaults_and_env_overrides():
     print("config defaults and environment overrides work")
 
 
+def attributed_event(
+    ip: str,
+    domain: str = None,
+    source: str = None,
+    port: int = 443,
+) -> EventSchema:
+    """An event that already carries a domain attribution, as an upload may."""
+    return EventSchema(
+        ts=1.0,
+        pid=1,
+        event="connect",
+        family="inet",
+        proto="tcp",
+        dst_ip=ip,
+        dst_port=port,
+        result="ok",
+        domain=domain,
+        domain_source=source,
+    )
+
+
+def test_event_domain_candidates_groups_by_ip():
+    """Repeated attributions collapse into one candidate carrying the count."""
+    candidates = event_domain_candidates([
+        attributed_event("1.1.1.1", "a.example", "passive_dns"),
+        attributed_event("1.1.1.1", "a.example", "passive_dns"),
+        attributed_event("1.1.1.1", "b.example", "reverse_dns"),
+        attributed_event("2.2.2.2", "c.example", "passive_dns"),
+        attributed_event("3.3.3.3"),
+    ])
+
+    assert set(candidates) == {"1.1.1.1", "2.2.2.2"}
+
+    by_domain = {c.domain: c for c in candidates["1.1.1.1"]}
+    assert by_domain["a.example"].count == 2
+    assert by_domain["a.example"].source == "passive_dns"
+    assert by_domain["b.example"].count == 1
+    assert by_domain["b.example"].source == "reverse_dns"
+    assert [c.domain for c in candidates["2.2.2.2"]] == ["c.example"]
+    print("✓ event domain candidates grouped by IP")
+
+
+def test_event_domain_candidates_drops_unsourced_domains():
+    """A domain with no domain_source is not a usable attribution."""
+    candidates = event_domain_candidates([
+        attributed_event("1.1.1.1", "unsourced.example", None),
+        attributed_event("1.1.1.1", "sourced.example", "passive_dns"),
+    ])
+    assert [c.domain for c in candidates["1.1.1.1"]] == ["sourced.example"]
+
+    assert event_domain_candidates([
+        attributed_event("9.9.9.9", "unsourced.example", None),
+    ]) == {}
+    print("✓ unsourced domains dropped")
+
+
+def test_event_domain_candidates_ignores_ports():
+    """Attribution is per IP: enrichment resolves names for addresses, not ports."""
+    candidates = event_domain_candidates([
+        attributed_event("1.1.1.1", "a.example", "passive_dns", port=443),
+        attributed_event("1.1.1.1", "a.example", "passive_dns", port=8443),
+    ])
+    assert len(candidates["1.1.1.1"]) == 1
+    assert candidates["1.1.1.1"][0].count == 2
+    print("✓ candidates keyed by IP across ports")
+
+
 def main():
     test_passive_dns_maps_a_record()
     test_passive_dns_counts_repeated_names_and_ignores_malformed()
@@ -233,6 +304,9 @@ def main():
     test_reverse_dns_max_ips()
     test_reverse_lookup_restores_default_timeout()
     test_config_defaults_and_env_overrides()
+    test_event_domain_candidates_groups_by_ip()
+    test_event_domain_candidates_drops_unsourced_domains()
+    test_event_domain_candidates_ignores_ports()
     print("all enrichment tests passed")
 
 
