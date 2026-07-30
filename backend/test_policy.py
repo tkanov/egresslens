@@ -14,6 +14,7 @@ from app.policy import (
     domain_matches,
     evaluate_policy,
     load_policy,
+    resolve_destinations,
 )
 from app.schemas import EventSchema
 
@@ -259,6 +260,84 @@ def test_md_escape_neutralizes_table_injection():
     assert _md_escape("evil.com | fake") == "evil.com \\| fake"
     assert "\n" not in _md_escape("line1\nline2")
     assert _md_escape("`code`") == "\\`code\\`"
+
+
+class CountingEvents(list):
+    """A list that records how many times it has been iterated."""
+
+    def __init__(self, items):
+        super().__init__(items)
+        self.scans = 0
+
+    def __iter__(self):
+        self.scans += 1
+        return super().__iter__()
+
+
+def attributed_event(ip: str, domain: str, source: str, port: int = 443) -> EventSchema:
+    """An event that already carries a domain attribution, as an upload may."""
+    return EventSchema(
+        ts=1.0,
+        pid=1,
+        event="connect",
+        family="inet",
+        proto="tcp",
+        dst_ip=ip,
+        dst_port=port,
+        result="ok",
+        domain=domain,
+        domain_source=source,
+    )
+
+
+def test_resolve_destinations_scans_events_a_fixed_number_of_times():
+    """The event scan count must not grow with the number of destinations.
+
+    resolve_destinations used to rescan every event once per destination to find
+    event-carried domain attributions, i.e. O(destinations * events). Because the
+    verdict covers every destination rather than a displayed top-N, that
+    dominated the whole upload: 588s on a report at the 50 MB cap, on a
+    synchronous endpoint holding a worker thread. Counting iterations rather than
+    timing keeps this guard deterministic on shared CI.
+    """
+    few = CountingEvents([event(f"10.0.0.{i}") for i in range(5)])
+    many = CountingEvents([event(f"10.1.{i // 256}.{i % 256}") for i in range(300)])
+
+    assert len(resolve_destinations(few, {})) == 5
+    assert len(resolve_destinations(many, {})) == 300
+
+    assert few.scans == many.scans, (
+        "event scans grew with destination count: "
+        f"{few.scans} for 5 destinations, {many.scans} for 300"
+    )
+    assert many.scans <= 4, f"expected a small constant scan count, got {many.scans}"
+
+
+def test_enrichment_attribution_takes_precedence_over_event_attribution():
+    events = [attributed_event("1.1.1.1", "from-event.example", "reverse_dns")]
+    resolved = resolve_destinations(events, candidates({"1.1.1.1": "from-enrichment.example"}))
+    assert resolved[0]["domain"] == "from-enrichment.example"
+    assert resolved[0]["domains"] == ["from-enrichment.example"]
+
+
+def test_empty_enrichment_entry_falls_through_to_event_attribution():
+    """An IP present in domain_candidates with an empty list must still fall back."""
+    events = [attributed_event("1.1.1.1", "from-event.example", "passive_dns")]
+    resolved = resolve_destinations(events, {"1.1.1.1": []})
+    assert resolved[0]["domain"] == "from-event.example"
+    assert resolved[0]["domains"] == ["from-event.example"]
+
+
+def test_verdict_uses_event_carried_domains_without_enrichment():
+    """A pre-enriched upload is judged on its own attribution, with no strace."""
+    events = [
+        attributed_event("1.1.1.1", "allowed.example", "passive_dns"),
+        attributed_event("2.2.2.2", "blocked.example", "passive_dns"),
+    ]
+    verdict = evaluate_policy(load_policy({"allow": ["allowed.example"]}), events, {})
+    assert verdict["verdict"] == "fail"
+    assert verdict["unexpected_count"] == 1
+    assert verdict["unexpected"][0]["domain"] == "blocked.example"
 
 
 def main():
