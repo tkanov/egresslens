@@ -1,0 +1,15 @@
+{
+  "command": ["python", "app.py", "dns", "example.com"],
+  "image": "egresslens/base:latest",
+  "mode": "run-app",
+  "exit_code": 0,
+  "cwd": "/app",
+  "start_time": "2026-02-06T11:28:25.150182Z",
+  "end_time": "2026-02-06T11:28:26.507193Z",
+  "counts": {
+    "total_events": 5,
+    "unique_dst_ips": 3,
+    "unique_dst_ip_ports": 4,
+    "ipv6_connects_skipped": 0
+  }
+}
