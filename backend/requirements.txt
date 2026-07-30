@@ -6,7 +6,7 @@
 # Bump deliberately; Dependabot opens the PRs (see .github/dependabot.yml).
 fastapi>=0.141.1,<1.0
 uvicorn>=0.52.0,<1.0
-sqlalchemy>=2.0,<3.0
+sqlalchemy>=2.0.51,<3.0
 pydantic>=2.13.4,<3.0
 python-multipart>=0.0.32,<0.1
 pyyaml>=6.0.3,<7.0
