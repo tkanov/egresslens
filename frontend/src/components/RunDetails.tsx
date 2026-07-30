@@ -32,6 +32,17 @@ function formatDate(value: unknown): string | null {
   })
 }
 
+function asCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function asCounts(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  return {}
+}
+
 function formatDuration(start: unknown, end: unknown): string | null {
   const startRaw = asString(start)
   const endRaw = asString(end)
@@ -63,6 +74,18 @@ export function RunDetails({ metadata }: RunDetailsProps) {
     { label: 'Working directory', value: asString(metadata.cwd), wide: true },
   ].filter((item) => item.value)
 
+  // Capture counts from run.json. ipv6_connects_skipped is the only per-run
+  // signal that the capture was incomplete, and it previously stopped here --
+  // written to run.json and rendered nowhere.
+  const counts = asCounts(metadata.counts)
+  const ipv6Skipped = asCount(counts.ipv6_connects_skipped)
+  const captureCounts = [
+    { label: 'Events captured', value: asCount(counts.total_events) },
+    { label: 'Destination IPs', value: asCount(counts.unique_dst_ips) },
+    { label: 'Destination IP:port pairs', value: asCount(counts.unique_dst_ip_ports) },
+    { label: 'IPv6 not captured', value: ipv6Skipped },
+  ].filter((item): item is { label: string; value: number } => item.value !== null)
+
   return (
     <Card>
       <CardHeader>
@@ -74,14 +97,39 @@ export function RunDetails({ metadata }: RunDetailsProps) {
             No run metadata was uploaded. Add run.json with the JSONL file to show command, image, exit code, and timing.
           </p>
         ) : (
-          <dl className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            {details.map(({ label, value, wide }) => (
-              <div key={label} className={wide ? 'md:col-span-2 lg:col-span-4' : undefined}>
-                <dt className="text-xs font-medium uppercase text-muted-foreground">{label}</dt>
-                <dd className="mt-1 break-words font-mono text-sm text-foreground">{value}</dd>
+          <div className="space-y-6">
+            <dl className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              {details.map(({ label, value, wide }) => (
+                <div key={label} className={wide ? 'md:col-span-2 lg:col-span-4' : undefined}>
+                  <dt className="text-xs font-medium uppercase text-muted-foreground">{label}</dt>
+                  <dd className="mt-1 break-words font-mono text-sm text-foreground">{value}</dd>
+                </div>
+              ))}
+            </dl>
+
+            {captureCounts.length > 0 && (
+              <div className="space-y-3 border-t pt-4">
+                <dl className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  {captureCounts.map(({ label, value }) => (
+                    <div key={label}>
+                      <dt className="text-xs font-medium uppercase text-muted-foreground">{label}</dt>
+                      <dd className="mt-1 font-mono text-sm text-foreground">
+                        {value.toLocaleString()}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+
+                {ipv6Skipped !== null && ipv6Skipped > 0 && (
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    {ipv6Skipped.toLocaleString()} IPv6 connection(s) were observed but their
+                    destinations were not captured. They are absent from every table on this
+                    page and cannot raise a policy FAIL.
+                  </p>
+                )}
               </div>
-            ))}
-          </dl>
+            )}
+          </div>
         )}
       </CardContent>
     </Card>

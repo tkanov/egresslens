@@ -62,7 +62,9 @@ export interface PolicyUnexpectedDestination {
 
 export interface PolicyVerdict {
   enabled: boolean;
-  verdict: 'pass' | 'fail';
+  /** 'inconclusive' means no destinations were observed, so nothing was checked. */
+  verdict: 'pass' | 'fail' | 'inconclusive';
+  destinations_evaluated: number;
   allow_rules: number;
   has_domain_rules: boolean;
   expected_count: number;

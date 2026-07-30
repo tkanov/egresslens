@@ -339,6 +339,27 @@ def test_verdict_uses_event_carried_domains_without_enrichment():
     assert verdict["unexpected_count"] == 1
     assert verdict["unexpected"][0]["domain"] == "blocked.example"
 
+def test_no_destinations_is_inconclusive_not_pass():
+    """An allowlist with nothing to judge must not report compliance.
+
+    "pass" here would be a vacuous truth presented as a security result: a failed
+    capture, the wrong file uploaded, and a genuinely quiet run are
+    indistinguishable from the events alone.
+    """
+    verdict = evaluate_policy(load_policy({"allow": ["pypi.org"]}), [], {})
+    assert verdict["verdict"] == "inconclusive"
+    assert verdict["destinations_evaluated"] == 0
+    assert verdict["expected_count"] == 0
+    assert verdict["unexpected_count"] == 0
+
+
+def test_destinations_evaluated_counts_every_destination():
+    events = [event("1.1.1.1"), event("1.1.1.1"), event("2.2.2.2", 8080)]
+    verdict = evaluate_policy(load_policy({"allow": ["0.0.0.0/0"]}), events, {})
+    assert verdict["verdict"] == "pass"
+    assert verdict["destinations_evaluated"] == 2  # unique (ip, port) pairs
+    assert verdict["expected_count"] == 2
+
 
 def main():
     import subprocess

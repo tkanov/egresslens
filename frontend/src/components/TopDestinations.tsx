@@ -16,6 +16,8 @@ import { cn } from '@/lib/utils'
 
 interface TopDestinationsProps {
   destinations: TopDestination[]
+  /** True total observed, which the backend caps at 50 before sending. */
+  uniqueDestinations?: number
 }
 
 function PortDisplay({ port, proto }: { port: number; proto?: string | null }) {
@@ -99,11 +101,21 @@ function DomainDisplay({ destination }: { destination: TopDestination }) {
   )
 }
 
-export function TopDestinations({ destinations }: TopDestinationsProps) {
+export function TopDestinations({ destinations, uniqueDestinations }: TopDestinationsProps) {
+  const total = uniqueDestinations ?? destinations.length
+  const truncated = total > destinations.length
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Top destinations</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle>Top destinations</CardTitle>
+          {truncated && (
+            <span className="text-sm text-muted-foreground">
+              Showing top {destinations.length} of {total.toLocaleString()}
+            </span>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         <Table>

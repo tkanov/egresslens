@@ -93,7 +93,12 @@ export function ReportPage() {
           <div data-testid="policy-section"><PolicyVerdict policy={report.summary.policy} /></div>
         )}
         <div data-testid="run-details-section"><RunDetails metadata={report.metadata} /></div>
-        <div data-testid="top-destinations-section"><TopDestinations destinations={report.summary.top_destinations} /></div>
+        <div data-testid="top-destinations-section">
+          <TopDestinations
+            destinations={report.summary.top_destinations}
+            uniqueDestinations={report.summary.unique_destinations}
+          />
+        </div>
         <div data-testid="timeline-section"><TimelineChart events={report.top_events} /></div>
         <div data-testid="flags-section"><FlagsPanel flags={report.flags} /></div>
       </div>

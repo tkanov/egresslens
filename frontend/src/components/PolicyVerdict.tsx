@@ -17,7 +17,23 @@ interface PolicyVerdictProps {
 export function PolicyVerdict({ policy }: PolicyVerdictProps) {
   if (!policy?.enabled) return null
 
+  const inconclusive = policy.verdict === 'inconclusive'
   const pass = policy.verdict === 'pass'
+
+  const badge = inconclusive
+    ? {
+        label: 'INCONCLUSIVE',
+        className: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400',
+      }
+    : pass
+      ? {
+          label: 'PASS',
+          className: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+        }
+      : {
+          label: 'FAIL',
+          className: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+        }
 
   return (
     <Card>
@@ -27,20 +43,27 @@ export function PolicyVerdict({ policy }: PolicyVerdictProps) {
           <span
             className={cn(
               'inline-flex items-center rounded px-2 py-0.5 text-sm font-semibold',
-              pass
-                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+              badge.className
             )}
           >
-            {pass ? 'PASS' : 'FAIL'}
+            {badge.label}
           </span>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          {policy.expected_count} of {policy.expected_count + policy.unexpected_count} destination(s)
-          matched the allowlist ({policy.allow_rules} rule{policy.allow_rules === 1 ? '' : 's'}).
-        </p>
+        {inconclusive ? (
+          <p className="text-sm text-muted-foreground">
+            No destinations were observed, so nothing was checked against the allowlist
+            ({policy.allow_rules} rule{policy.allow_rules === 1 ? '' : 's'}). This is not a
+            pass — an empty capture, the wrong file, and a run that genuinely reached
+            nothing all look the same here.
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {policy.expected_count} of {policy.expected_count + policy.unexpected_count} destination(s)
+            matched the allowlist ({policy.allow_rules} rule{policy.allow_rules === 1 ? '' : 's'}).
+          </p>
+        )}
 
         {policy.unexpected.length > 0 && (
           <Table>
