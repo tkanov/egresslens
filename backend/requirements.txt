@@ -4,7 +4,7 @@
 # package names against a 3.9-3.12 CI matrix.
 #
 # Bump deliberately; Dependabot opens the PRs (see .github/dependabot.yml).
-fastapi>=0.115,<1.0
+fastapi>=0.141.1,<1.0
 uvicorn>=0.30,<1.0
 sqlalchemy>=2.0,<3.0
 pydantic>=2.7,<3.0
