@@ -26,9 +26,23 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # Grouping minor+patch is safe for packages at 1.0 or above, where a minor
+      # promises not to break. It is not safe below 1.0: semver gives 0.x minors
+      # no such promise, and one breaking release takes the entire group PR down
+      # with it rather than just itself. eslint-plugin-react-refresh 0.4 -> 0.5
+      # moved its eslint peer range to ^9 || ^10, which failed `npm ci` outright
+      # and blocked the playwright, autoprefixer and postcss bumps that had been
+      # grouped alongside it -- three safe updates held up by one unrelated
+      # breaking change.
+      #
+      # Excluded packages are not skipped; anything matching no group gets its own
+      # PR, which is the point. Add any dev dependency still on 0.x here, and
+      # remove it once it reaches 1.0.
       frontend-dev:
         dependency-type: development
         update-types: ["minor", "patch"]
+        exclude-patterns:
+          - "eslint-plugin-react-refresh"
 
   - package-ecosystem: github-actions
     directory: /
