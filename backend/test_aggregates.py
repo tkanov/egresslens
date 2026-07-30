@@ -57,10 +57,48 @@ def test_empty_events():
     print("✓ empty events handled")
 
 
+def test_top_destinations_use_event_domain_attribution():
+    """compute_aggregates shares the one-pass event-attribution helper.
+
+    Passive DNS outranks reverse DNS for the primary domain, and every observed
+    name is listed with its count.
+    """
+    def attributed(ip: str, domain: str, source: str) -> EventSchema:
+        return EventSchema(
+            ts=1.0,
+            pid=1,
+            event="connect",
+            family="inet",
+            proto="tcp",
+            dst_ip=ip,
+            dst_port=443,
+            result="ok",
+            domain=domain,
+            domain_source=source,
+        )
+
+    summary = compute_aggregates(
+        [
+            attributed("1.1.1.1", "a.example", "passive_dns"),
+            attributed("1.1.1.1", "a.example", "passive_dns"),
+            attributed("1.1.1.1", "b.example", "reverse_dns"),
+        ],
+        {},
+    )
+
+    dest = summary["top_destinations"][0]
+    assert dest["domain"] == "a.example"
+    assert dest["domain_source"] == "passive_dns"
+    assert [d["domain"] for d in dest["domains"]] == ["a.example", "b.example"]
+    assert [d["count"] for d in dest["domains"]] == [2, 1]
+    print("✓ top destinations use event-carried domain attribution")
+
+
 def main():
     test_modal_protocol_per_destination()
     test_protocol_tie_breaks_on_first_seen()
     test_empty_events()
+    test_top_destinations_use_event_domain_attribution()
     print("all aggregate tests passed")
 
 
