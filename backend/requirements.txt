@@ -9,7 +9,7 @@ uvicorn>=0.30,<1.0
 sqlalchemy>=2.0,<3.0
 pydantic>=2.13.4,<3.0
 python-multipart>=0.0.9,<0.1
-pyyaml>=6.0,<7.0
+pyyaml>=6.0.3,<7.0
 
 # Required at runtime by fastapi.testclient, which the backend tests use.
 httpx>=0.28.1,<1.0
