@@ -9,12 +9,14 @@ from egresslens.strace_parser import (
     is_ipv6_connect_line,
     parse_resumed_connect_line,
     parse_resumed_send_line,
+    parse_resumed_socket_line,
     parse_send_line,
     parse_socket_line,
     parse_strace_line,
     parse_to_jsonl,
     parse_unfinished_connect_line,
     parse_unfinished_send_line,
+    parse_unfinished_socket_line,
 )
 
 
@@ -74,6 +76,74 @@ def test_parse_socket_line():
     failed_socket = parse_socket_line(failed_line)
     assert failed_socket is None
     print("✓ Correctly ignored failed socket")
+
+
+def test_parse_split_socket_line():
+    """Test parsing socket() lines split as unfinished/resumed."""
+    unfinished_line = (
+        "2748 1785413866.874733 socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC, "
+        "IPPROTO_IP <unfinished ...>"
+    )
+    assert parse_unfinished_socket_line(unfinished_line) == (2748, "tcp")
+
+    # The entry half carries no fd, so on its own it must not reach SocketState.
+    assert parse_socket_line(unfinished_line) is None
+
+    resumed_line = "2748 1785413866.874780 <... socket resumed>) = 4"
+    assert parse_resumed_socket_line(resumed_line) == (2748, 4)
+
+    dgram_line = "2748 1785413866.875596 socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC <unfinished ...>"
+    assert parse_unfinished_socket_line(dgram_line) == (2748, "udp")
+
+    failed_resumed = "2748 1785413866.875600 <... socket resumed>) = -1 EMFILE"
+    assert parse_resumed_socket_line(failed_resumed) == (2748, -1)
+
+    # socketpair() is a different syscall and must not be read as a socket().
+    assert parse_resumed_socket_line("2748 1785413866.8756 <... socketpair resumed>) = 0") is None
+    print("✓ Successfully parsed split socket")
+
+
+def test_split_socket_keeps_protocol_attribution():
+    """A socket() split across two lines still labels the connect() on its fd.
+
+    Reproduces the interleaving that `strace -f` produces when another thread's
+    event lands between socket() entry and exit. Before the resumed half was
+    joined to the entry half, the fd never reached SocketState and this connect()
+    came out as proto "unknown" -- which made the real-strace integration test
+    fail on roughly one CI run in four, depending on thread scheduling.
+    """
+    strace_content = """2748 1785413866.860043 socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC, IPPROTO_IP) = 3
+2748 1785413866.874733 socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC, IPPROTO_IP <unfinished ...>
+2749 1785413866.874750 accept4(3, <unfinished ...>
+2748 1785413866.874780 <... socket resumed>) = 4
+2748 1785413866.874810 connect(4, {sa_family=AF_INET, sin_port=htons(57407), sin_addr=inet_addr("127.0.0.1")}, 16) = 0
+2748 1785413866.875596 socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC, IPPROTO_IP) = 3
+2748 1785413866.875660 connect(3, {sa_family=AF_INET, sin_port=htons(9), sin_addr=inet_addr("127.0.0.1")}, 16) = 0
+"""
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        strace_file = tmp_path / "strace.out"
+        jsonl_file = tmp_path / "egress.jsonl"
+
+        strace_file.write_text(strace_content)
+
+        count = parse_to_jsonl(strace_file, jsonl_file)
+        assert count == 2, f"Expected 2 events, got {count}"
+
+        events = [json.loads(line) for line in jsonl_file.read_text().strip().split("\n")]
+
+        tcp_event = events[0]
+        assert tcp_event["dst_port"] == 57407
+        assert tcp_event["proto"] == "tcp", "split socket() lost its protocol"
+        assert tcp_event["result"] == "ok"
+
+        # fd 3 is reused by the later SOCK_DGRAM socket, so the same fd must now
+        # read as udp rather than keeping the first socket's tcp label.
+        udp_event = events[1]
+        assert udp_event["dst_port"] == 9
+        assert udp_event["proto"] == "udp"
+    print("✓ Split socket() keeps protocol attribution")
 
 
 def test_parse_split_connect_line():

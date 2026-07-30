@@ -55,11 +55,18 @@ def load_jsonl(path: Path) -> list[dict]:
 
 
 def failure_context(strace_path: Path, events: list[dict]) -> str:
-    """Build compact debugging context for integration test failures."""
+    """Build compact debugging context for integration test failures.
+
+    Resumed lines are included deliberately. Filtering on `socket(`/`connect(`
+    alone drops `<... socket resumed>) = 4`, and that line is exactly what
+    explains a connect() reported with proto "unknown" -- the excerpt showed a
+    socket() and a connect() that looked like they should have matched up, with
+    the line tying them together missing.
+    """
     strace_excerpt = "\n".join(
         line
         for line in strace_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-        if "socket(" in line or "connect(" in line
+        if "socket(" in line or "connect(" in line or "resumed>" in line
     )
     return (
         f"events:\n{json.dumps(events, indent=2)}\n\n"
