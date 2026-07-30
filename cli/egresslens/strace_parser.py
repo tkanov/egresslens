@@ -12,6 +12,7 @@ from typing import Iterator, Optional
 
 
 SocketState = dict[tuple[int, int], str]
+PendingSocketState = dict[int, str]
 PendingConnectState = dict[int, dict]
 PendingSendState = dict[int, list]
 
@@ -56,6 +57,23 @@ _RESUMED_SEND_RE = re.compile(
     r"(\d+)\s+[\d.]+\s+<\.\.\. (?:" + "|".join(SEND_SYSCALLS) + r") resumed>"
 )
 
+# socket() split across two lines, which `strace -f` does whenever another
+# thread's event lands between syscall entry and exit. Unlike connect() and
+# send*(), neither half is usable alone: the arguments naming the protocol are
+# decoded on entry, but the fd they belong to is the return value and only shows
+# up on the resumed line. Dropping such a pair leaves the fd absent from
+# SocketState, and every connect() on it is then labelled proto "unknown" --
+# silently understating a report as no-protocol-known rather than tcp or udp.
+#
+# The type argument is matched without `<` so a socket() whose third argument is
+# missing cannot swallow the `<unfinished ...>` marker itself.
+_UNFINISHED_SOCKET_RE = re.compile(
+    r"(\d+)\s+[\d.]+\s+socket\(\s*AF_INET\s*,\s*([^,<]+?)\s*"
+    r"(?:,\s*([^<]*?))?\s*<unfinished \.\.\.>"
+)
+
+_RESUMED_SOCKET_RE = re.compile(r"(\d+)\s+[\d.]+\s+<\.\.\. socket resumed>\)?\s*=\s*(-?\d+)")
+
 
 def parse_socket_line(line: str) -> Optional[tuple[int, int, str]]:
     """Parse a socket() syscall and return PID, file descriptor, and protocol."""
@@ -81,6 +99,40 @@ def parse_socket_line(line: str) -> Optional[tuple[int, int, str]]:
     protocol = match.group(3)
     proto = protocol_from_socket(socket_type, protocol)
     return pid, fd, proto
+
+
+def parse_unfinished_socket_line(line: str) -> Optional[tuple[int, str]]:
+    """Parse a socket() line split by strace as unfinished.
+
+    Returns the PID and protocol only. The file descriptor is socket()'s return
+    value, so it is not on this line -- it arrives on the matching resumed line,
+    and the two have to be joined to know which fd the protocol describes.
+    """
+    match = _UNFINISHED_SOCKET_RE.search(line)
+    if not match:
+        return None
+
+    pid = int(match.group(1))
+    socket_type = match.group(2)
+    # Absent when strace split the line before the protocol argument; the socket
+    # type alone still distinguishes SOCK_STREAM from SOCK_DGRAM.
+    protocol = match.group(3) or ""
+    return pid, protocol_from_socket(socket_type, protocol)
+
+
+def parse_resumed_socket_line(line: str) -> Optional[tuple[int, int]]:
+    """Parse a strace line that resumes a previously unfinished socket().
+
+    Returns the PID and the returned file descriptor, which is negative when the
+    call failed.
+    """
+    match = _RESUMED_SOCKET_RE.search(line)
+    if not match:
+        return None
+
+    pid = int(match.group(1))
+    fd = int(match.group(2))
+    return pid, fd
 
 
 def protocol_from_socket(socket_type: str, protocol: str) -> str:
@@ -122,6 +174,7 @@ def parse_strace_file(strace_path: Path, stats: Optional[dict] = None) -> Iterat
         Event dictionaries matching the JSONL schema
     """
     socket_state: SocketState = {}
+    pending_sockets: PendingSocketState = {}
     pending_connects: PendingConnectState = {}
     pending_sends: PendingSendState = {}
     ipv6_connects_skipped = 0
@@ -135,6 +188,24 @@ def parse_strace_file(strace_path: Path, stats: Optional[dict] = None) -> Iterat
             if socket_info:
                 pid, fd, proto = socket_info
                 socket_state[(pid, fd)] = proto
+
+            pending_socket = parse_unfinished_socket_line(line)
+            if pending_socket:
+                pid, proto = pending_socket
+                # Keyed by PID because strace's first column is a TID, and a
+                # thread can only be inside one syscall at a time.
+                pending_sockets[pid] = proto
+                continue
+
+            resumed_socket = parse_resumed_socket_line(line)
+            if resumed_socket:
+                pid, fd = resumed_socket
+                proto = pending_sockets.pop(pid, None)
+                # A failed socket() returns no fd to attribute the protocol to,
+                # matching parse_socket_line's handling of the unsplit case.
+                if proto is not None and fd >= 0:
+                    socket_state[(pid, fd)] = proto
+                continue
 
             pending_connect = parse_unfinished_connect_line(line, socket_state)
             if pending_connect:
