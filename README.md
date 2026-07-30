@@ -3,7 +3,7 @@
 Trace outbound network activity from Python apps in Docker, write the events as JSONL, and inspect the results in a small web UI.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![CLI Python 3.9+](https://img.shields.io/badge/cli%20python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![Docker 20.10+](https://img.shields.io/badge/docker-20.10+-2496ED.svg)](https://www.docker.com/)
 
 ## What It Does
@@ -20,7 +20,8 @@ You can also tell EgressLens which destinations an app is expected to reach. Giv
 
 ## Quick Start
 
-Requirements: Docker 20.10+, Python 3.9+, and Node.js 18+ for the UI.
+Requirements: Docker 20.10+, and Python 3.9+ for the CLI. Viewing a report needs
+Python 3.10+ for the backend API and Node.js 20+ for the UI.
 
 ```bash
 pip install -e cli/
