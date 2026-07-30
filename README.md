@@ -98,13 +98,19 @@ part fails closed on purpose: a shared IP that served both an allowed and a
 disallowed name is reported as unexpected rather than passing on the allowed one.
 Destinations that could not be named (unresolved IPs) match `ip`/CIDR rules only.
 
-**Trust model.** `ip`/CIDR rules match the real `connect()` destination and are a
-hard gate. `domain` rules match the name attributed during enrichment, which is
-derived from DNS answers seen in the traced process's *own* trace — so code that
-is actively trying to evade the allowlist could forge that attribution. Treat
-`domain` rules as advisory (great for catching accidental or non-adversarial
-egress drift) and use `ip`/CIDR rules where you need a verdict that the traced
-code cannot influence.
+**Trust model.** `ip`/CIDR rules match the real kernel-level destination — the
+address passed to `connect()`, or to `sendto`/`sendmsg`/`sendmmsg` on an
+unconnected socket — and are a hard gate. `domain` rules match the name
+attributed during enrichment, which is derived from DNS answers seen in the
+traced process's *own* trace — so code that is actively trying to evade the
+allowlist could forge that attribution. Treat `domain` rules as advisory (great
+for catching accidental or non-adversarial egress drift) and use `ip`/CIDR rules
+where you need a verdict the traced code cannot influence by choice of name.
+
+A verdict is only as complete as the capture behind it: a PASS means nothing
+off-allowlist was *observed*, and the observation set is bounded by
+[Limits](#limits) below. IPv6 destinations and any egress submitted outside
+strace's `network` syscall class are not observed, so they cannot raise a FAIL.
 
 The policy verdict is independent of the other flags: an allowlisted destination
 on an uncommon port can still raise the "Unusual ports" flag, so a report may
@@ -150,7 +156,8 @@ The CLI still mounts the app read-only, drops other capabilities, uses `no-new-p
 
 ## Limits
 
-- IPv4 only. IPv6 connections are counted (reported as `ipv6_connects_skipped`) but their destinations are not captured.
+- IPv4 only. Destinations are captured from `connect()` and from `sendto`/`sendmsg`/`sendmmsg` on unconnected sockets, so datagram egress that never calls `connect()` is reported. IPv6 (`AF_INET6`) destinations are not captured: those reached via `connect()` are counted (reported as `ipv6_connects_skipped`), but an IPv6 destination named on a send\* call is neither captured nor counted.
+- Only syscalls in strace's `network` class are seen. Egress submitted another way — `io_uring`, for example — is not captured, and cannot raise a policy FAIL.
 - Domain enrichment sees UDP DNS A-record answers in `egress.strace`; it does not cover DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, or IPv6.
 - Reverse DNS fallback skips private and non-routable IP ranges and is capped by backend configuration.
 - Policy `domain` rules only match destinations that were named during enrichment, so include `egress.strace` when using them; unresolved IPs can still be covered with `ip`/CIDR rules.

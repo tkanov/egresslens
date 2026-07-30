@@ -93,6 +93,10 @@ Sample:
 {"ts": 1770477764.28121, "pid": 12, "event": "connect", "family": "inet", "proto": "tcp", "dst_ip": "151.101.0.223", "dst_port": 443, "result": "ok", "errno": null}
 ```
 
+`event` records which syscall named the destination: `connect`, or `sendto` /
+`sendmsg` / `sendmmsg` for a datagram sent on an unconnected socket. See
+[Which syscalls are parsed](#which-syscalls-are-parsed).
+
 
 - `egress.strace` - captured `strace` outputs
 
@@ -153,11 +157,18 @@ Reverse DNS fallback is enabled by default but bounded by configuration: `ENRICH
 
 ### IPv4 only
 
-The current MVP captures **IPv4 (AF_INET) connections only**. IPv6 (AF_INET6) connections are silently filtered out.
+The current MVP captures **IPv4 (AF_INET) destinations only**.
 
 - All events in `egress.jsonl` have `"family": "inet"` (IPv4)
-- IPv6 connections do not appear in the event logs
+- IPv6 destinations do not appear in the event logs
 - The `strace` parser in the CLI only recognizes the AF_INET socket family
+- IPv6 destinations reached via `connect()` are counted and reported as `counts.ipv6_connects_skipped` in `run.json`, so a report does not silently understate egress. An IPv6 destination named on a `sendto`/`sendmsg`/`sendmmsg` call is currently neither captured nor counted.
+
+### Which syscalls are parsed
+
+A destination is captured from either `connect()` or, when the socket is unconnected, from the `sendto`/`sendmsg`/`sendmmsg` call that names it. Both matter: `dnspython` resolves with `sendto()` on an unconnected socket and never calls `connect()`, as do statsd clients, syslog-over-UDP, NTP, and Python QUIC stacks. A send on a socket that was already `connect()`ed prints `msg_name=NULL` and is not re-reported, so there is no double counting.
+
+Only syscalls in strace's `network` class are traced (`-e trace=network`). Egress submitted by another mechanism — `io_uring`, for example — is not captured at all and cannot raise a policy FAIL.
 
 **Why**: IPv6 support requires:
 - Additional strace event parsing (AF_INET6 patterns)
