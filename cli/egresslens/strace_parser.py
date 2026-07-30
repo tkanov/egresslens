@@ -37,12 +37,19 @@ _SOCKADDR_IN_RE = re.compile(
     r"sin_addr=inet_addr\(\"([^\"]+)\"\)[^{}]*\}"
 )
 
-# Trailing return value of a completed call. Anchored at end of line so a
-# `) = 0` sequence inside a captured payload buffer cannot be mistaken for the
-# syscall result, and tolerant of strace's errno description:
-#   ) = 29   |   ) = -1 EPERM   |   ) = -1 EPERM (Operation not permitted)
+# Trailing return value of a completed call, tolerant of strace's errno
+# description:  ) = 29  |  ) = -1 EPERM  |  ) = -1 EPERM (Operation not permitted)
+#
+# Anchored at end of line AND required to follow the syscall's closing paren.
+# Both halves matter. Anchoring stops a `= 0` early in a captured payload from
+# being read as the result; requiring the paren stops a payload that *ends* the
+# line from doing the same. That second case is reachable: sendmsg prints
+# msg_name before msg_iov, so a trace truncated mid-payload -- a killed
+# container, or the `&& sync` in docker_runner being skipped because the traced
+# app exited non-zero -- leaves a valid sockaddr with payload text at the line
+# end. Such a line yields no event rather than an event with a fabricated result.
 _SEND_RESULT_RE = re.compile(
-    r"=\s*(-?\d+)(?:\s+([A-Z][A-Z0-9_]*))?(?:\s+\([^)]*\))?\s*$"
+    r"\)\s*=\s*(-?\d+)(?:\s+([A-Z][A-Z0-9_]*))?(?:\s+\([^)]*\))?\s*$"
 )
 
 _RESUMED_SEND_RE = re.compile(

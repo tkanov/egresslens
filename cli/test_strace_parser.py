@@ -303,6 +303,36 @@ def test_parse_split_send_line():
     print("✓ Successfully parsed split send")
 
 
+def test_truncated_send_line_is_not_given_a_fabricated_result():
+    """A line cut off mid-payload must not borrow a result from the payload text.
+
+    sendmsg prints msg_name before msg_iov, so a trace truncated mid-payload
+    still carries a valid sockaddr. That is reachable in practice: the container
+    may be killed, and docker_runner's `strace ... && sync` skips the sync
+    whenever the traced app exits non-zero. Requiring the return value to follow
+    the syscall's closing paren keeps `metric=0` from being read as `= 0`.
+    """
+    truncated = (
+        '12345 1.0 sendmsg(5, {msg_name={sa_family=AF_INET, sin_port=htons(8125), '
+        'sin_addr=inet_addr("198.51.100.44")}, msg_namelen=16, '
+        'msg_iov=[{iov_base="metric=0'
+    )
+    assert parse_send_line(truncated, None) is None
+    print("✓ Truncated send line dropped rather than given a fabricated result")
+
+    # A payload containing '= 0' well before a real return must not confuse it.
+    embedded = (
+        '12345 1.0 sendto(4, "x = 0 and y = 1", 15, 0, {sa_family=AF_INET, '
+        'sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = -1 EPERM'
+    )
+    parsed = parse_send_line(embedded, None)
+    assert parsed is not None
+    _, events = parsed
+    assert events[0]["result"] == "error"
+    assert events[0]["errno"] == "EPERM"
+    print("✓ Real return value preferred over '= N' inside the payload")
+
+
 def test_parse_to_jsonl_captures_unconnected_udp():
     """End-to-end: a dnspython-shaped trace reports its nameserver destination.
 
@@ -353,5 +383,6 @@ if __name__ == "__main__":
     test_parse_sendmmsg_line()
     test_parse_failed_send_line()
     test_parse_split_send_line()
+    test_truncated_send_line_is_not_given_a_fabricated_result()
     test_parse_to_jsonl_captures_unconnected_udp()
     print("\nAll tests passed! ✓")
