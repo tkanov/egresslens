@@ -1,0 +1,5 @@
+{"ts": 1770382105.150182, "pid": 11, "event": "connect", "family": "inet", "proto": "tcp", "dst_ip": "10.10.0.10", "dst_port": 443, "result": "ok", "errno": null}
+{"ts": 1770382105.200730, "pid": 11, "event": "connect", "family": "inet", "proto": "udp", "dst_ip": "10.10.0.53", "dst_port": 53, "result": "ok", "errno": null}
+{"ts": 1770382105.902411, "pid": 12, "event": "connect", "family": "inet", "proto": "tcp", "dst_ip": "10.10.0.10", "dst_port": 443, "result": "ok", "errno": null}
+{"ts": 1770382106.104882, "pid": 12, "event": "connect", "family": "inet", "proto": "tcp", "dst_ip": "10.10.0.99", "dst_port": 9999, "result": "error", "errno": "ECONNREFUSED"}
+{"ts": 1770382106.507193, "pid": 12, "event": "sendto", "family": "inet", "proto": "udp", "dst_ip": "10.10.0.53", "dst_port": 53, "result": "ok", "errno": null}
