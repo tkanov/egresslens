@@ -3,7 +3,6 @@
 
 import tempfile
 from pathlib import Path
-import json
 
 from egresslens.run_app import (
     discover_entry_point,

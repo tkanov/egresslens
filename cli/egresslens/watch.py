@@ -99,7 +99,7 @@ def watch_command(
         print(f"  Unique destination IP:port pairs: {unique_dst_ip_ports}", file=sys.stdout)
     if ipv6_connects_skipped:
         print(f"  Note: {ipv6_connects_skipped} IPv6 connection(s) not captured (IPv4 only)", file=sys.stdout)
-    print(f"  Files written:", file=sys.stdout)
+    print("  Files written:", file=sys.stdout)
     print(f"    - {jsonl_path.relative_to(output_dir)} ({total_events} events)", file=sys.stdout)
     print(f"    - {metadata_path.relative_to(output_dir)} (metadata)", file=sys.stdout)
     if strace_path.exists() and strace_path.stat().st_size > 0:

@@ -2,7 +2,6 @@
 from sqlalchemy import Column, String, DateTime, JSON
 from sqlalchemy.orm import declarative_base
 from datetime import datetime, timezone
-import uuid
 
 Base = declarative_base()
 

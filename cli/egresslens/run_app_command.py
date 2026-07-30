@@ -4,7 +4,7 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Sequence, Optional
+from typing import Sequence
 
 from egresslens.docker_runner import run_python_app
 from egresslens.metadata import count_events_from_jsonl, generate_metadata, write_metadata
@@ -111,6 +111,6 @@ def run_app_command(
     if ipv6_connects_skipped:
         print(f"  Note: {ipv6_connects_skipped} IPv6 connection(s) not captured (IPv4 only)")
     if app_meta["has_requirements"]:
-        print(f"  Dependencies: Installed from requirements.txt")
+        print("  Dependencies: Installed from requirements.txt")
 
     return exit_code
