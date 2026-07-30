@@ -2,13 +2,23 @@
 # stops an upstream release from breaking main with no change here -- but only at
 # the cost of going stale. This is the other half: Dependabot opens the bump PRs,
 # and CI decides whether they are safe.
+#
+# Tuned after the first run opened 24 PRs in a day. Most of that was a one-time
+# backlog on a repo that had never had Dependabot, but three things made it worse
+# and are addressed below: ungrouped backend updates, coupled frontend packages
+# arriving as separate PRs that block each other, and majors landing
+# unannounced as work items rather than as decisions.
 version: 2
 updates:
   - package-ecosystem: pip
     directory: /backend
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
+    # No `ignore` for majors here, unlike npm below. It would not do anything:
+    # requirement updates carry no semver classification to match on (see the
+    # group comment), and the `<1.0` / `<3.0` upper bounds in requirements.txt
+    # already stop a major from being proposed at all.
     groups:
       # No update-types filter here, deliberately. backend/requirements.txt holds
       # version *ranges* rather than pinned versions, so Dependabot raises the
@@ -30,15 +40,45 @@ updates:
   - package-ecosystem: pip
     directory: /cli
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 3
 
   - package-ecosystem: npm
     directory: /frontend
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
+    # Majors are migrations, not bumps, and arriving unasked they read as noise:
+    # every frontend major proposed so far needed hand-written work rather than a
+    # merge -- eslint 8 -> 10 meant a flat-config rewrite, Tailwind 3 -> 4 meant a
+    # codemod and a CSS audit, and TypeScript 7 is not even installable yet
+    # because typescript-eslint caps its peer at <6.1.0.
+    #
+    # The cost is real and worth stating: nothing will now tell you a major
+    # exists. Check deliberately when picking up frontend work. This is only
+    # tolerable because security updates are a separate channel -- if Dependabot
+    # alerts are off for this repo, a vulnerable major is invisible, so that
+    # switch matters more than this file does.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
+      # Order matters: a dependency joins the first group whose rules it matches.
+      #
+      # React has to come before the dependency-type groups below, because it
+      # spans both -- react/react-dom are runtime, @types/react/@types/react-dom
+      # are dev. Splitting them is not merely untidy, it deadlocks: Dependabot
+      # proposed react@19 and @types/react@19 in one PR and react-dom@19 with
+      # @types/react-dom@19 in another, and each failed `npm ci` on the other's
+      # absence (`@types/react-dom@18 ... Found: @types/react@19`). Neither could
+      # ever go green alone. Same shape for vite and its plugin, which land
+      # together anyway by both being dev.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
       # Grouping minor+patch is safe for packages at 1.0 or above, where a minor
       # promises not to break. It is not safe below 1.0: semver gives 0.x minors
       # no such promise, and one breaking release takes the entire group PR down
@@ -49,15 +89,23 @@ updates:
       # breaking change.
       #
       # Excluded packages are not skipped; anything matching no group gets its own
-      # PR, which is the point. Add any dev dependency still on 0.x here, and
-      # remove it once it reaches 1.0.
+      # PR, which is the point. Add any dependency still on 0.x to the exclusions
+      # of its group, and remove it once it reaches 1.0.
       frontend-dev:
         dependency-type: development
         update-types: ["minor", "patch"]
         exclude-patterns:
           - "eslint-plugin-react-refresh"
+      frontend-prod:
+        dependency-type: production
+        update-types: ["minor", "patch"]
+        exclude-patterns:
+          - "class-variance-authority"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    # Deliberately not ignoring majors here. Action majors are the one kind that
+    # has consistently been a real bump: checkout 5 -> 7, setup-python 6 -> 7 and
+    # setup-node 5 -> 7 all merged green with no source change.
