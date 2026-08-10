@@ -143,6 +143,12 @@ show a **PASS** verdict alongside other flags.
 
 Trace a Python project with an entry point named `__main__.py`, `main.py`, or `app.py`:
 
+> **Known bug:** `__main__.py` is checked first but does not currently run. The
+> runner invokes `python -m <app dir name>` with the working directory set to
+> that same directory, so the module is not on `sys.path` under that name and the
+> run fails with `ModuleNotFoundError`. Use `main.py` or `app.py` until this is
+> fixed.
+
 ```bash
 egresslens run-app ./my_python_app --args "arg1 arg2"
 ```

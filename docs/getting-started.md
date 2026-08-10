@@ -182,13 +182,18 @@ capture failed.
 Rule syntax, and why `domain` rules are advisory while `ip`/CIDR rules are a hard
 gate, are covered in the [main README](../README.md#egress-policy).
 
+Two things to watch when writing a policy: `allow` is the only key honoured — a
+`deny` block is silently ignored rather than rejected, so it will not do what it
+looks like it does — and a rule combining `domain` and `ip` is not an IP hard
+gate; write the `ip` rule separately.
+
 ---
 
 ## Limitations
 
 ### Domain enrichment scope
 
-Domain enrichment is backend-only. The CLI still writes the same `egress.jsonl` event format, and enrichment is applied only when a report is uploaded. Passive DNS currently parses UDP DNS A-record responses visible in `egress.strace`; DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, and IPv6 enrichment are outside the current scope.
+Domain enrichment is backend-only. The CLI still writes the same `egress.jsonl` event format, and enrichment is applied only when a report is uploaded. Passive DNS currently parses UDP DNS A-record responses read via `recvfrom` or `recvmsg` in `egress.strace`; DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, IPv6 enrichment, and answers received via `recvmmsg` are outside the current scope.
 
 Reverse DNS fallback is enabled by default but bounded by configuration: `ENRICHMENT_REVERSE_DNS_TIMEOUT_SECONDS` defaults to `0.5`, and `ENRICHMENT_REVERSE_DNS_MAX_IPS` defaults to `100`. It skips private, loopback, link-local, multicast, unspecified, and reserved ranges.
 

@@ -97,6 +97,10 @@ DNS for public IPv4 addresses still unresolved. Private, loopback, link-local,
 multicast, unspecified, and reserved ranges are skipped. Malformed or truncated
 DNS payloads are ignored rather than failing the upload.
 
+Only `recvfrom` and `recvmsg` lines are scanned, so a resolver that reads answers
+with `recvmmsg` yields no passive DNS at all — those destinations fall through to
+reverse DNS or stay unresolved.
+
 Events gain `domain` and `domain_source`; top destinations also carry `domains`,
 the full candidate list as `{domain, source, count}`. The primary domain prefers
 `passive_dns` over `reverse_dns`, then the highest observed count, then lexical

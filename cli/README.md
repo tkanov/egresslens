@@ -40,6 +40,13 @@ egresslens run-app ./my_python_app --args "arg1 arg2"
 Finds the entry point (`__main__.py`, `main.py`, or `app.py`, in that order),
 installs `requirements.txt` if present, and runs it under trace.
 
+> **Known bug:** the `__main__.py` case does not work. The runner invokes
+> `python -m <app dir name>` while the working directory *is* that directory, so
+> the module is never on `sys.path` under that name and the run fails with
+> `ModuleNotFoundError`. Since `__main__.py` is checked first, the canonical
+> runnable-package layout is the one that breaks. Use `main.py` or `app.py` for
+> now; the failure is pinned by a strict xfail in `test_docker_runner.py`.
+
 ### `watch` — trace any command
 
 ```bash
