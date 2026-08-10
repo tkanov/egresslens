@@ -180,7 +180,7 @@ to judge, which looks the same whether the run was genuinely silent or the
 capture failed.
 
 Rule syntax, and why `domain` rules are advisory while `ip`/CIDR rules are a hard
-gate, are covered in the [main README](../README.md#egress-policy).
+gate, are covered in [docs/policy.md](policy.md).
 
 Two things to watch when writing a policy: `allow` is the only key honoured — a
 `deny` block is silently ignored rather than rejected, so it will not do what it
