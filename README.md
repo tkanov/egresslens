@@ -16,12 +16,12 @@ EgressLens runs an app under `strace`, captures IPv4 network syscalls, and produ
 
 The backend can enrich uploaded reports with domains from passive DNS seen in the trace, then bounded reverse DNS for unresolved public IPv4 addresses.
 
-You can also tell EgressLens which destinations an app is expected to reach. Give it an allowlist and it flags anything off the list, with a clear pass/fail verdict on the report. See [Egress Policy](#egress-policy).
+You can also tell EgressLens which destinations an app is expected to reach. Give it an allowlist and it flags anything off the list, with a PASS/FAIL/INCONCLUSIVE verdict on the report. See [Egress Policy](#egress-policy).
 
 ## Quick Start
 
 Requirements: Docker 20.10+, and Python 3.9+ for the CLI. Viewing a report needs
-Python 3.10+ for the backend API and Node.js 20+ for the UI.
+Python 3.10+ for the backend API and Node.js 20.19+ (or 22.13+) for the UI.
 
 ```bash
 pip install -e cli/
@@ -55,12 +55,12 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` and upload:
+Open `http://localhost:5173` and upload. Only the first file is required:
 
-- `egresslens-output/egress.jsonl` as the report
-- `egresslens-output/run.json` for metadata
-- `egresslens-output/egress.strace` for domain enrichment
-- an optional `policy.json` allowlist (see [Egress Policy](#egress-policy))
+- `egresslens-output/egress.jsonl` — the report itself
+- `egresslens-output/run.json` — optional, adds run metadata
+- `egresslens-output/egress.strace` — optional, enables domain enrichment
+- `policy.json` — optional allowlist (see [Egress Policy](#egress-policy))
 
 ![Report view](docs/images/report.png)
 
@@ -68,9 +68,21 @@ Open `http://localhost:5173` and upload:
 
 Upload an allowlist alongside a report to turn it into a verdict: every observed
 destination is checked against the policy, and anything that does not match is
-reported as unexpected. The report gets a **PASS/FAIL** verdict, and a failing
-verdict raises a high-severity "Unexpected destinations" flag (also included in
-the markdown export).
+reported as unexpected.
+
+The verdict is three-way, not a boolean:
+
+| Verdict | Meaning | Flag raised |
+|---|---|---|
+| **PASS** | Every observed destination matched a rule | — |
+| **FAIL** | At least one did not | "Unexpected destinations", high |
+| **INCONCLUSIVE** | An allowlist was uploaded but nothing was observed | "Egress policy not evaluated", medium |
+
+That third case is deliberately not a PASS. With no observed destinations the
+allowlist was never exercised, so a failed capture, the wrong file uploaded, and
+a genuinely quiet run all look identical — reporting compliance there would be a
+vacuous truth dressed up as a security result. **Do not read "not FAIL" as
+PASS.** All three verdicts appear in the markdown export.
 
 The policy is a JSON file with an `allow` list. Each entry is either a shorthand
 string or an object:
@@ -93,6 +105,15 @@ string or an object:
 - An **ip** is a single address or a CIDR range.
 - An object rule may add a **port**; every field it declares must match.
 
+`allow` is the only key read — there is no deny list, and an allowlist holds at
+most 1000 rules. Note that unknown keys *inside* a rule object are rejected, but
+unknown *top-level* keys are currently ignored silently, so a stray `deny` block
+is dropped without warning rather than failing the upload.
+
+Combining `domain` and `ip` in one rule does not give you an IP hard gate: a rule
+that names a domain is only ever reached through domain matching, so the same IP
+seen unresolved will not match it. Write the `ip` rule separately.
+
 A destination is expected if an `ip`/CIDR rule covers it, or — when it resolved
 to one or more domains — if **every** observed domain matches a rule. That last
 part fails closed on purpose: a shared IP that served both an allowed and a
@@ -112,6 +133,7 @@ A verdict is only as complete as the capture behind it: a PASS means nothing
 off-allowlist was *observed*, and the observation set is bounded by
 [Limits](#limits) below. IPv6 destinations and any egress submitted outside
 strace's `network` syscall class are not observed, so they cannot raise a FAIL.
+An INCONCLUSIVE verdict says the capture yielded nothing to judge at all.
 
 The policy verdict is independent of the other flags: an allowlisted destination
 on an uncommon port can still raise the "Unusual ports" flag, so a report may
@@ -120,6 +142,12 @@ show a **PASS** verdict alongside other flags.
 ## CLI
 
 Trace a Python project with an entry point named `__main__.py`, `main.py`, or `app.py`:
+
+> **Known bug:** `__main__.py` is checked first but does not currently run. The
+> runner invokes `python -m <app dir name>` with the working directory set to
+> that same directory, so the module is not on `sys.path` under that name and the
+> run fails with `ModuleNotFoundError`. Use `main.py` or `app.py` until this is
+> fixed.
 
 ```bash
 egresslens run-app ./my_python_app --args "arg1 arg2"
@@ -141,10 +169,13 @@ More detail: [cli/README.md](cli/README.md).
 ## Repo Map
 
 - `cli/`: capture network activity and write trace artifacts
-- `backend/`: FastAPI upload, aggregation, enrichment, and export API
+- `backend/`: FastAPI upload, aggregation, enrichment, policy, and export API
 - `frontend/`: React UI for uploads and reports
 - `sample_app/`: small app for predictable demo traffic
-- `docs/getting-started.md`: longer walkthrough with screenshots
+- `scripts/`: `demo_capture.sh`, the entry point for the demo flow
+- `Dockerfile`: the tracing image, plus `docker-build.sh` / `docker-teardown.sh`
+- [`docs/getting-started.md`](docs/getting-started.md): longer walkthrough with screenshots
+- [`docs/demo.md`](docs/demo.md): repeatable live demo and browser recording
 
 ## Security Model
 
@@ -159,7 +190,7 @@ The CLI still mounts the app read-only, drops other capabilities, uses `no-new-p
 
 - IPv4 only. Destinations are captured from `connect()` and from `sendto`/`sendmsg`/`sendmmsg` on unconnected sockets, so datagram egress that never calls `connect()` is reported. IPv6 (`AF_INET6`) destinations are not captured: those reached via `connect()` are counted (reported as `ipv6_connects_skipped`), but an IPv6 destination named on a send\* call is neither captured nor counted.
 - Only syscalls in strace's `network` class are seen. Egress submitted another way — `io_uring`, for example — is not captured, and cannot raise a policy FAIL.
-- Domain enrichment sees UDP DNS A-record answers in `egress.strace`; it does not cover DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, or IPv6.
+- Domain enrichment reads UDP DNS A-record answers from `recvfrom`/`recvmsg` lines in `egress.strace`. It does not cover DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, IPv6, or answers received via `recvmmsg`.
 - Reverse DNS fallback skips private and non-routable IP ranges and is capped by backend configuration.
 - Policy `domain` rules only match destinations that were named during enrichment, so include `egress.strace` when using them; unresolved IPs can still be covered with `ip`/CIDR rules.
 

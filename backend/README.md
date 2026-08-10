@@ -1,81 +1,162 @@
 # EgressLens Backend
 
-FastAPI backend for processing and serving egress monitoring reports.
+FastAPI service that ingests CLI trace artifacts, aggregates them into a report,
+enriches destinations with domains, and judges them against an optional egress
+policy.
 
 ## Setup
 
-1. Create and activate virtual environment:
+Requires Python 3.10+ (FastAPI and `python-multipart` both declare that floor).
+
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
-
-2. Install dependencies:
-```bash
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-3. Run the server:
-```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-The API will be available at `http://localhost:8000`
+The API is then at `http://localhost:8000`, with interactive docs at `/docs`.
 
-## Configuration
+## API
 
-The backend uses configurable thresholds for security flags calculation. Configuration can be set via:
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/reports/upload` | Create a report from uploaded artifacts |
+| `GET /api/reports/{id}` | Fetch a report |
+| `GET /api/reports/{id}/events` | List events; optional `?limit=` (1–1000) |
+| `GET /api/reports/{id}/export.md` | Export the report as Markdown |
+| `GET /health` | Health check |
 
-1. **config.yaml file** (recommended for persistent configuration):
-   ```yaml
-   flags:
-     high_dest_threshold: 50          # Unique IP:port pairs threshold
-     failure_threshold: 0.10          # Failure rate threshold (0.0-1.0)
-     usual_ports: [80, 443, 53, 22]  # Ports not considered "unusual"
+### Upload
 
-   enrichment:
-     enabled: true
-     reverse_dns_enabled: true
-     reverse_dns_timeout_seconds: 0.5
-     reverse_dns_max_ips: 100
-   ```
+Multipart form, one required field and three optional ones:
 
-2. **Environment variables** (highest priority, overrides config.yaml):
-   ```bash
-   FLAG_HIGH_DEST_THRESHOLD=50                 # int
-   FLAG_FAILURE_THRESHOLD=0.10                 # float
-   FLAG_USUAL_PORTS=80,443,53,22              # comma-separated ports
-   ENRICHMENT_ENABLED=true                    # bool
-   ENRICHMENT_REVERSE_DNS_ENABLED=true        # bool
-   ENRICHMENT_REVERSE_DNS_TIMEOUT_SECONDS=0.5 # positive float
-   ENRICHMENT_REVERSE_DNS_MAX_IPS=100         # int >= 0
-   ```
-   
-   Example:
-   ```bash
-   FLAG_HIGH_DEST_THRESHOLD=100 uvicorn app.main:app --reload --port 8000
-   ```
+| Field | Required | File | Effect |
+|---|---|---|---|
+| `file` | yes | `egress.jsonl` | The events themselves |
+| `metadata_file` | no | `run.json` | Adds command, image, exit code, timing |
+| `strace_file` | no | `egress.strace` | Enables domain enrichment |
+| `policy_file` | no | `policy.json` | Enables the allowlist verdict |
 
-## API Endpoints
+Each file is capped at `max_upload_mb` (default 50 MB) and rejected with HTTP 413
+if larger; a malformed policy is rejected with HTTP 400.
 
-- `POST /api/reports/upload` - Upload JSONL file as `file`, optional `run.json` as `metadata_file`, and optional `egress.strace` as `strace_file`
-- `GET /api/reports/{id}` - Get report by ID
-- `GET /api/reports/{id}/events` - Get events for a report
-- `GET /api/reports/{id}/export.md` - Export report as markdown
-- `GET /health` - Health check
+`GET /events` returns `{report_id, total, returned, events}` — `total` is the
+stored event count, `returned` reflects `limit`.
+
+## Egress policy
+
+When `policy_file` is supplied, every observed destination is judged against the
+allowlist and the result lands in `summary.policy`:
+
+```json
+{
+  "enabled": true,
+  "verdict": "pass",
+  "destinations_evaluated": 12,
+  "allow_rules": 4,
+  "has_domain_rules": true,
+  "expected_count": 12,
+  "unexpected_count": 0,
+  "unexpected": []
+}
+```
+
+The verdict is **three-way**, not a boolean:
+
+- `pass` — every observed destination matched a rule.
+- `fail` — at least one did not. Raises a **high**-severity "Unexpected
+  destinations" flag.
+- `inconclusive` — an allowlist was uploaded but no destinations were observed,
+  so nothing was checked. Raises a **medium**-severity "Egress policy not
+  evaluated" flag. This case is deliberately not `pass`: a failed capture, the
+  wrong file, and a genuinely quiet run are indistinguishable here, and calling
+  that compliance would be a vacuous truth reported as a security result.
+
+Both flags render in the flags panel and in the Markdown export, which also
+carries a dedicated `## Egress Policy` section with the verdict and the
+unexpected-destination table.
+
+Two bounds worth knowing: an allowlist may hold at most 1000 rules (more is a
+400), and the stored `unexpected` list is truncated to 50 entries while
+`unexpected_count` stays exact.
+
+Rule syntax and the trust model — why `domain` rules are advisory and `ip`/CIDR
+rules are a hard gate — are in the [main README](../README.md#egress-policy).
+
+> **Caveat:** unknown *top-level* keys in a policy file are currently ignored
+> without warning, so a `deny` list written by mistake is silently dropped and
+> the run can report `pass`. Unknown keys *inside* a rule object are rejected.
+> Only `allow` is honoured.
 
 ## Domain enrichment
 
-When `strace_file` is supplied, the backend extracts passive DNS mappings from UDP DNS response payloads visible in `egress.strace`. Current passive DNS support covers A records for IPv4 events. Malformed or truncated DNS payloads are ignored without failing the upload.
+With `strace_file` supplied, the backend first extracts passive DNS from UDP DNS
+responses in the trace (A records, IPv4 only), then falls back to bounded reverse
+DNS for public IPv4 addresses still unresolved. Private, loopback, link-local,
+multicast, unspecified, and reserved ranges are skipped. Malformed or truncated
+DNS payloads are ignored rather than failing the upload.
 
-For IPs not resolved by passive DNS, bounded reverse DNS can fill public IPv4 destinations. Reverse DNS skips private, loopback, link-local, multicast, unspecified, and reserved ranges. Defaults are enabled, `0.5` seconds per lookup, and at most `100` reverse lookups per upload.
+Only `recvfrom` and `recvmsg` lines are scanned, so a resolver that reads answers
+with `recvmmsg` yields no passive DNS at all — those destinations fall through to
+reverse DNS or stay unresolved.
 
-Report events may include `domain` and `domain_source`. Top destinations may include `domain`, `domain_source`, and `domains`, where `domains` preserves all candidates as `{domain, source, count}`. Primary domain selection prefers `passive_dns` over `reverse_dns`; ties among passive names use highest observed count, then lexical order. `summary.enrichment` reports passive matches, reverse matches, unresolved IPs, skipped reverse lookups, and lookup errors. Markdown export includes the enrichment summary and domain source.
+Events gain `domain` and `domain_source`; top destinations also carry `domains`,
+the full candidate list as `{domain, source, count}`. The primary domain prefers
+`passive_dns` over `reverse_dns`, then the highest observed count, then lexical
+order. `summary.enrichment` reports passive matches, reverse matches, unresolved
+IPs, skipped lookups, and errors.
+
+## Configuration
+
+Settings come from `config.yaml`, overridden by environment variables.
+
+```yaml
+flags:
+  high_dest_threshold: 50         # unique IP:port pairs before flagging
+  failure_threshold: 0.10         # connection failure rate, 0.0–1.0
+  usual_ports: [80, 443, 53, 22]  # ports not considered "unusual"
+
+enrichment:
+  enabled: true
+  reverse_dns_enabled: true
+  reverse_dns_timeout_seconds: 0.5
+  reverse_dns_max_ips: 100
+
+uploads:
+  max_upload_mb: 50
+```
+
+| Variable | Type | Default |
+|---|---|---|
+| `FLAG_HIGH_DEST_THRESHOLD` | int | 50 |
+| `FLAG_FAILURE_THRESHOLD` | float | 0.10 |
+| `FLAG_USUAL_PORTS` | comma-separated ints | 80,443,53,22 |
+| `ENRICHMENT_ENABLED` | bool | true |
+| `ENRICHMENT_REVERSE_DNS_ENABLED` | bool | true |
+| `ENRICHMENT_REVERSE_DNS_TIMEOUT_SECONDS` | float > 0 | 0.5 |
+| `ENRICHMENT_REVERSE_DNS_MAX_IPS` | int ≥ 0 | 100 |
+| `MAX_UPLOAD_MB` | int > 0 | 50 |
+| `ALLOWED_ORIGINS` | comma-separated origins | — |
+
+`ALLOWED_ORIGINS` extends the CORS allowlist, which already covers
+`localhost`/`127.0.0.1` on ports 5173 and 3000. Set it if you serve the UI from
+anywhere else.
+
+```bash
+FLAG_HIGH_DEST_THRESHOLD=100 uvicorn app.main:app --reload --port 8000
+```
+
+## Tests
+
+pytest is not in `requirements.txt`, so install it too:
+
+```bash
+pip install -r requirements.txt pytest
+pytest -v
+```
 
 ## Compatibility
 
-The backend accepts JSONL output from both CLI commands:
-- `egresslens watch` - For arbitrary commands
-- `egresslens run-app` - For Python projects with automatic dependency installation
-
-Both commands produce the same JSONL event format and are fully compatible with the backend API.
+Both `egresslens watch` and `egresslens run-app` emit the same JSONL event
+format, and the backend accepts either.

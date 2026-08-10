@@ -21,9 +21,7 @@ def watch_command(
     Args:
         command: Command to run as a sequence of strings
         output_dir: Directory to write output files
-        mode: Execution mode ('docker' or 'host')
-        image: Docker image to use (only for docker mode)
-        no_enrich: Whether to disable DNS enrichment
+        image: Docker image to use; must have strace installed
 
     Returns:
         Exit code from the executed command

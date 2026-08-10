@@ -5,8 +5,8 @@ This demo runs a small Python app in Docker, captures live egress artifacts, upl
 ## Prerequisites
 
 - Docker 20.10+
-- Python 3.8+
-- Node.js 18+
+- Python 3.9+ for the CLI, 3.10+ for the backend
+- Node.js 20.19+ (or 22.13+)
 - Backend dependencies installed in `backend/.venv`
 - Frontend dependencies installed with `npm install`
 
@@ -81,5 +81,10 @@ A successful demo shows:
 - domain enrichment from `egress.strace` when live DNS responses are available
 - timeline and flags sections
 - Markdown export button
+
+The recorded flow uploads the three captured artifacts and does not exercise the
+egress allowlist. To see a PASS/FAIL/INCONCLUSIVE verdict, upload a `policy.json`
+by hand in the egress allowlist picker — see
+[getting-started.md](getting-started.md) for a worked example.
 
 The demo uses live network and DNS, so exact IPs, counts, and enrichment results can vary by machine and network.
