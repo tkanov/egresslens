@@ -6,7 +6,7 @@ This walkthrough follows the full flow: start backend, start frontend, run the C
 
 - Docker 20.10+
 - Python 3.9+ for the CLI, 3.10+ for the backend
-- Node.js 20.19+ (or 22.12+)
+- Node.js 20.19+ (or 22.13+)
 
 ## Step 1: Start the backend
 

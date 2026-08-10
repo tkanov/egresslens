@@ -5,7 +5,8 @@ egress report.
 
 ## Setup
 
-Requires Node.js 20.19+ or 22.12+ (the Vite 8 toolchain floor).
+Requires Node.js 20.19+ or 22.13+ — Vite 8 sets the 20.19 floor, ESLint 10 the
+22.13 one.
 
 ```bash
 npm install

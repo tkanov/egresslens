@@ -21,7 +21,7 @@ You can also tell EgressLens which destinations an app is expected to reach. Giv
 ## Quick Start
 
 Requirements: Docker 20.10+, and Python 3.9+ for the CLI. Viewing a report needs
-Python 3.10+ for the backend API and Node.js 20.19+ (or 22.12+) for the UI.
+Python 3.10+ for the backend API and Node.js 20.19+ (or 22.13+) for the UI.
 
 ```bash
 pip install -e cli/
