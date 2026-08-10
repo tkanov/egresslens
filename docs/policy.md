@@ -3,7 +3,7 @@
 An egress policy is an allowlist of the destinations an app is expected to reach.
 Upload one alongside a report and every observed destination is checked against
 it; anything that does not match is reported as unexpected. This page is the full
-reference — the [main README](../README.md#egress-policy) has the short version.
+reference. The [main README](../README.md#egress-policy) has the short version.
 
 ## Verdicts
 
@@ -11,7 +11,7 @@ The verdict is three-way, not a boolean:
 
 | Verdict | Meaning | Flag raised |
 |---|---|---|
-| **PASS** | Every observed destination matched a rule | — |
+| **PASS** | Every observed destination matched a rule | (none) |
 | **FAIL** | At least one did not | "Unexpected destinations", high |
 | **INCONCLUSIVE** | An allowlist was uploaded but nothing was observed | "Egress policy not evaluated", medium |
 
@@ -19,7 +19,7 @@ All three appear in the markdown export.
 
 That third case is deliberately not a PASS. With no observed destinations the
 allowlist was never exercised, so a failed capture, the wrong file uploaded, and
-a genuinely quiet run all look identical — reporting compliance there would be a
+a genuinely quiet run all look identical, and reporting compliance there would be a
 vacuous truth dressed up as a security result. **Do not read "not FAIL" as
 PASS.**
 
@@ -50,7 +50,7 @@ object:
 - An **ip** is a single address or a CIDR range.
 - An object rule may add a **port**; every field it declares must match.
 
-`allow` is the only key read — there is no deny list, and an allowlist holds at
+`allow` is the only key read. There is no deny list, and an allowlist holds at
 most 1000 rules. Note that unknown keys *inside* a rule object are rejected, but
 unknown *top-level* keys are currently ignored silently, so a stray `deny` block
 is dropped without warning rather than failing the upload.
@@ -61,8 +61,8 @@ seen unresolved will not match it. Write the `ip` rule separately.
 
 ## How a destination is matched
 
-A destination is expected if an `ip`/CIDR rule covers it, or — when it resolved
-to one or more domains — if **every** observed domain matches a rule. That last
+A destination is expected if an `ip`/CIDR rule covers it, or, when it resolved
+to one or more domains, if **every** observed domain matches a rule. That last
 part fails closed on purpose: a shared IP that served both an allowed and a
 disallowed name is reported as unexpected rather than passing on the allowed one.
 Destinations that could not be named (unresolved IPs) match `ip`/CIDR rules only.
@@ -72,10 +72,10 @@ enrichment, include `egress.strace` in the upload when using them.
 
 ## Trust model
 
-`ip`/CIDR rules match the real kernel-level destination — the address passed to
-`connect()`, or to `sendto`/`sendmsg`/`sendmmsg` on an unconnected socket — and
+`ip`/CIDR rules match the real kernel-level destination, the address passed to
+`connect()`, or to `sendto`/`sendmsg`/`sendmmsg` on an unconnected socket, and
 are a hard gate. `domain` rules match the name attributed during enrichment,
-which is derived from DNS answers seen in the traced process's *own* trace — so
+which is derived from DNS answers seen in the traced process's *own* trace, so
 code that is actively trying to evade the allowlist could forge that
 attribution.
 
@@ -93,7 +93,7 @@ judge at all.
 
 ## See also
 
-- [backend/README.md](../backend/README.md) — the policy API, response shape, and
+- [backend/README.md](../backend/README.md): the policy API, response shape, and
   result bounds
-- [docs/getting-started.md](getting-started.md#step-9-add-an-allowlist-for-a-verdict)
-  — writing your first policy as part of the walkthrough
+- [docs/getting-started.md](getting-started.md#step-9-add-an-allowlist-for-a-verdict):
+  writing your first policy as part of the walkthrough
