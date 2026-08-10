@@ -5,8 +5,8 @@ This walkthrough follows the full flow: start backend, start frontend, run the C
 ## Prerequisites
 
 - Docker 20.10+
-- Python 3.8+
-- Node.js 18+
+- Python 3.9+ for the CLI, 3.10+ for the backend
+- Node.js 20.19+ (or 22.12+)
 
 ## Step 1: Start the backend
 
@@ -30,14 +30,18 @@ npm run dev
 
 Open the UI at `http://localhost:5173`.
 
-## Step 3: Go to the CLI directory and activate the venv
+## Step 3: Install the CLI
+
+In a third terminal, from the repo root:
 
 ```bash
-cd cli
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e cli/
 ```
+
+`pip install -e cli/` is what creates the `egresslens` command. Installing
+`cli/requirements.txt` on its own gets you the dependencies but no command.
 
 ## Step 4: Build the tracing image
 
@@ -130,11 +134,14 @@ $ head -n 5 egresslens-output/egress.jsonl
 
 ## Step 7: Upload the JSONL in the UI
 
-Use the upload page (frontend app) to submit `egresslens-output/egress.jsonl`.
+Use the upload page to submit `egresslens-output/egress.jsonl`. That file is the
+only required one; the other three pickers each add something:
 
-Optionally add `egresslens-output/run.json` in the run metadata picker so the report can show command, image, exit code, and timing. Add `egresslens-output/egress.strace` in the passive DNS trace picker when you want the backend to enrich public IP destinations with domains.
+- `egresslens-output/run.json` in the run metadata picker — command, image, exit code, timing
+- `egresslens-output/egress.strace` in the passive DNS trace picker — domains for public IPs
+- a `policy.json` allowlist in the egress allowlist picker — a pass/fail verdict (see Step 9)
 
-The backend first uses passive UDP DNS A-record answers visible in `egress.strace`. For unresolved public IPv4 addresses, it can then use bounded reverse DNS fallback. Existing JSONL-only uploads remain valid; unresolved destinations simply show an empty domain value.
+For domains, the backend first uses passive UDP DNS A-record answers visible in `egress.strace`, then falls back to bounded reverse DNS for unresolved public IPv4 addresses. JSONL-only uploads remain valid; unresolved destinations simply show an empty domain value.
 
 
 ![Upload screen](images/ui-frontend.png)
@@ -144,6 +151,36 @@ The backend first uses passive UDP DNS A-record answers visible in `egress.strac
 After upload, the report page shows the KPIs, timeline, and top destinations. Enriched reports show a primary domain for each destination when available, with a source hint such as `passive_dns` or `reverse_dns`. Markdown export includes the domain source and enrichment counters.
 
 ![Report view](images/report.png)
+
+## Step 9: Add an allowlist for a verdict
+
+To turn the report into a pass/fail check, write the destinations the app is
+supposed to reach into a `policy.json`:
+
+```json
+{
+  "allow": [
+    "example.com",
+    "*.python.org",
+    "192.168.1.1/32"
+  ]
+}
+```
+
+Upload it in the egress allowlist picker alongside the same `egress.jsonl`. Every
+observed destination is then checked against the list, and the report gains a
+verdict:
+
+- **PASS** — everything observed was on the list
+- **FAIL** — something was not, raising a high-severity "Unexpected destinations" flag
+- **INCONCLUSIVE** — no destinations were observed at all, so the list was never exercised
+
+INCONCLUSIVE is not a quiet pass: it means the capture gave the allowlist nothing
+to judge, which looks the same whether the run was genuinely silent or the
+capture failed.
+
+Rule syntax, and why `domain` rules are advisory while `ip`/CIDR rules are a hard
+gate, are covered in the [main README](../README.md#egress-policy).
 
 ---
 

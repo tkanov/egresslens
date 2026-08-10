@@ -1,46 +1,41 @@
-# Tiny app used as testing target
+# Sample app
 
-Tiny sample application used for testing the main system. It provides two small utilities:
+A deliberately tiny app that makes predictable outbound requests, used as a
+tracing target in demos and integration tests. It does two things:
 
-- DNS lookups (`A`, `AAAA`, `MX`) using `dnspython`.
-- Querying crt.sh for certificate transparency entries (JSON).
+- DNS lookups (`A`, `AAAA`, `MX`) via `dnspython`
+- Certificate transparency queries against crt.sh (JSON over HTTPS)
 
-## Using with EgressLens
+## Trace it with EgressLens
 
-### Method 1: Using `run-app` command (recommended for Python projects)
+From the repo root:
 
 ```bash
-# Run with automatic dependency installation
 egresslens run-app ./sample_app --args "dns example.com"
 egresslens run-app ./sample_app --args "crt example.com"
 egresslens run-app ./sample_app --args "all python.org"
 ```
 
-The `run-app` command automatically:
-- Discovers the entry point (`app.py` in this case)
-- Installs dependencies from `requirements.txt`
-- Captures network activity to `egresslens-output/egress.jsonl`
+`run-app` discovers the entry point (`app.py` here), installs
+`requirements.txt` inside the container, and writes the trace to
+`egresslens-output/`.
 
-### Method 2: Using `watch` command (for any command)
+Use `run-app` rather than `watch` for this app: `watch` runs a command in the
+tracing image as-is and never installs dependencies, and the base image has
+neither `dnspython` nor `requests`.
+
+## Run it directly
 
 ```bash
-egresslens watch -- python app.py dns example.com
-egresslens watch -- python app.py crt example.com
-egresslens watch -- python app.py all python.org
-```
-
-## Direct Usage (without EgressLens)
-
-```
+pip install -r requirements.txt
 python app.py dns example.com
 python app.py crt example.com
 python app.py all example.com
 ```
 
-### Example:
+Example output:
 
-
-```
+```json
 $ python app.py all python.org
 {
   "domain": "python.org",
@@ -63,11 +58,5 @@ $ python app.py all python.org
 }
 ```
 
-
-Install dependencies:
-
-```
-pip install -r requirements.txt
-```
-
-This app is intentionally small and dependency-light so it can be used in integration tests.
+Kept small and dependency-light on purpose so it stays usable in integration
+tests.
