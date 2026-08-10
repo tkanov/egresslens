@@ -14,6 +14,10 @@ pip install -e cli/
 This is what puts the `egresslens` command on your PATH. Installing
 `cli/requirements.txt` alone pulls in the dependencies but not the command.
 
+The `[docker]` extra (`pip install -e './cli[docker]'`) adds the Docker SDK.
+Without it the runner shells out to the `docker` CLI instead, which works fine —
+the extra just selects which path runs.
+
 ## Quick start
 
 Build the tracing image once, then trace the sample app:
@@ -95,10 +99,11 @@ exit_code = watch_command(
 
 ## Tests
 
-From `cli/`:
+pytest is not a declared dependency, so install it alongside the package:
 
 ```bash
-pytest -v
+pip install -e './cli[docker]' pytest
+cd cli && pytest -v
 ```
 
 `test_strace_integration.py` traces real loopback TCP and UDP sockets with a

@@ -145,7 +145,10 @@ FLAG_HIGH_DEST_THRESHOLD=100 uvicorn app.main:app --reload --port 8000
 
 ## Tests
 
+pytest is not in `requirements.txt`, so install it too:
+
 ```bash
+pip install -r requirements.txt pytest
 pytest -v
 ```
 
