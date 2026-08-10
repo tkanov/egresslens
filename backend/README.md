@@ -82,7 +82,7 @@ Two bounds worth knowing: an allowlist may hold at most 1000 rules (more is a
 `unexpected_count` stays exact.
 
 Rule syntax and the trust model — why `domain` rules are advisory and `ip`/CIDR
-rules are a hard gate — are in the [main README](../README.md#egress-policy).
+rules are a hard gate — are in [docs/policy.md](../docs/policy.md).
 
 > **Caveat:** unknown *top-level* keys in a policy file are currently ignored
 > without warning, so a `deny` list written by mistake is silently dropped and
