@@ -23,18 +23,34 @@ DEFAULT_IMAGE = "egresslens/base:latest"
 # DNS responses including EDNS0, at the cost of somewhat larger trace files.
 STRACE_STRING_LIMIT = 4096
 
-# Container exit status used when the pre-trace setup step fails (see
-# _build_strace_cmd). It has to be distinguishable from the traced program's own
-# status, because a failed setup means the program never ran and the trace is
-# absent rather than empty. 90 sits above sysexits.h (64-78) and below the
-# shell's 126-165 band, and pip itself exits 1-4, so a collision would need the
-# traced app to exit exactly 90.
+# Container exit status reported when the pre-trace setup step fails (see
+# _build_strace_cmd). 90 sits above sysexits.h (64-78) and below the shell's
+# 126-165 band, and pip itself exits 1-4. The status alone is not proof, because
+# a traced app is free to exit 90 too -- see setup_step_failed.
 SETUP_FAILED_EXIT_CODE = 90
 
 # Where the dependency install's own stdout/stderr goes. Not /output/cmd_stdout:
 # that file is the traced app's output, and mixing pip into it would make the
 # app look like it printed things it never printed.
 PIP_LOG_NAME = "pip_install.log"
+
+
+def setup_step_failed(exit_code: int, strace_output_path: Path) -> bool:
+    """Whether a run ended in the untraced setup step instead of the command.
+
+    Two facts, because the exit status on its own is ambiguous. The container
+    reports SETUP_FAILED_EXIT_CODE, *and* the trace is empty or absent: strace
+    writes at least its own exit line for any command it runs, so an empty trace
+    means strace never started, which is only true if the setup step failed
+    first. An app that exits 90 by itself leaves a real trace, and treating that
+    as a failed install would throw away a complete capture and replace it with a
+    diagnostic about pip that is simply false.
+    """
+    if exit_code != SETUP_FAILED_EXIT_CODE:
+        return False
+    if not strace_output_path.exists():
+        return True
+    return strace_output_path.stat().st_size == 0
 
 
 class DockerRunner:
@@ -96,14 +112,19 @@ class DockerRunner:
         if not strace_output_path.exists():
             strace_output_path.touch()
 
-    def _setup_step_failed(self, setup_command: Optional[str], exit_code: int) -> bool:
-        """Whether the run ended in the pre-trace setup step instead of the command.
+    def _ran_only_the_setup_step(
+        self,
+        setup_command: Optional[str],
+        exit_code: int,
+        strace_output_path: Path,
+    ) -> bool:
+        """Whether this run got no further than its setup step.
 
-        Callers use this to skip _ensure_strace_file_exists: an empty trace file
-        would turn a setup that never got as far as running the command into a
-        zero-event capture, which reads as "no egress" instead of "no run".
+        Used to skip _ensure_strace_file_exists, because creating the file would
+        turn a run that never started into a zero-event capture, which reads as
+        "no egress" instead of "no run".
         """
-        return bool(setup_command) and exit_code == SETUP_FAILED_EXIT_CODE
+        return bool(setup_command) and setup_step_failed(exit_code, strace_output_path)
 
     def _default_image_hint(self) -> str:
         return (
@@ -205,7 +226,7 @@ class DockerRunner:
             exit_code = container.wait()["StatusCode"]
 
             # Ensure strace file exists (touch if missing)
-            if not self._setup_step_failed(setup_command, exit_code):
+            if not self._ran_only_the_setup_step(setup_command, exit_code, strace_output_path):
                 self._ensure_strace_file_exists(strace_output_path)
 
             # Remove container
@@ -282,7 +303,7 @@ class DockerRunner:
                     pass
 
             # Ensure strace file exists (touch if missing)
-            if not self._setup_step_failed(setup_command, exit_code):
+            if not self._ran_only_the_setup_step(setup_command, exit_code, strace_output_path):
                 self._ensure_strace_file_exists(strace_output_path)
 
             # Remove container
@@ -364,7 +385,7 @@ def run_python_app(
         python_cmd, app_path, strace_output_path, setup_command
     )
 
-    if setup_command and error is None and exit_code == SETUP_FAILED_EXIT_CODE:
+    if setup_command and error is None and setup_step_failed(exit_code, strace_output_path):
         pip_log = strace_output_path.parent / PIP_LOG_NAME
         error = (
             "Installing requirements.txt failed, so the app never ran and nothing "

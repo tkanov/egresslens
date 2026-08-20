@@ -119,6 +119,7 @@ def test_split_socket_keeps_protocol_attribution():
 2748 1785413866.874810 connect(4, {sa_family=AF_INET, sin_port=htons(57407), sin_addr=inet_addr("127.0.0.1")}, 16) = 0
 2748 1785413866.875596 socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC, IPPROTO_IP) = 3
 2748 1785413866.875660 connect(3, {sa_family=AF_INET, sin_port=htons(9), sin_addr=inet_addr("127.0.0.1")}, 16) = 0
+2748 1785413866.875700 sendto(3, "x", 1, MSG_NOSIGNAL, NULL, 0) = 1
 """
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -174,10 +175,16 @@ def test_parse_to_jsonl():
 12347 1707150825.456 openat(AT_FDCWD, "/etc/passwd", O_RDONLY) = 3
 12348 1707150826.700 socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC|SOCK_NONBLOCK, IPPROTO_IP) = 5
 12348 1707150826.789 connect(5, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, 16) = 0
+12348 1707150826.790 sendto(5, "\\1\\0", 2, MSG_NOSIGNAL, NULL, 0) = 2
 12349 1707150827.700 socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC|SOCK_NONBLOCK, IPPROTO_IP) = 6
 12349 1707150827.789 connect(6, {sa_family=AF_INET, sin_port=htons(9), sin_addr=inet_addr("127.0.0.1")}, 16 <unfinished ...>
 12349 1707150827.790 <... connect resumed>) = 0
+12349 1707150827.800 sendto(6, "\\1\\0", 2, MSG_NOSIGNAL, NULL, 0) = 2
 """
+    # The two sendto lines are what make these connected UDP sockets egress: a
+    # UDP connect() on its own transmits nothing, and one that is never followed
+    # by traffic is dropped as an address-selection probe (see
+    # test_udp_connect_without_traffic_is_not_reported_as_egress).
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
@@ -441,6 +448,212 @@ def test_parse_to_jsonl_captures_unconnected_udp():
     print("✓ Unconnected UDP destinations captured end to end")
 
 
+def parse_events(strace_content: str) -> tuple:
+    """Parse a trace body and return (events, stats)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        strace_file = tmp_path / "strace.out"
+        jsonl_file = tmp_path / "egress.jsonl"
+        strace_file.write_text(strace_content)
+
+        stats: dict = {}
+        parse_to_jsonl(strace_file, jsonl_file, stats)
+        body = jsonl_file.read_text().strip()
+        events = [json.loads(line) for line in body.split("\n")] if body else []
+        return events, stats
+
+
+def test_udp_connect_without_traffic_is_not_reported_as_egress():
+    """A real getaddrinfo() trace: the sorting probes are not destinations.
+
+    Captured from `socket.gethostbyname("example.com")` in the tracing image.
+    glibc resolves the name, then connect()s a UDP socket to each answer address
+    and calls getsockname() to see which source address the kernel would pick.
+    connect() on a UDP socket transmits nothing, so example.com's two addresses
+    were never contacted -- yet the report named them, and 2 of its 3 events and
+    2 of its 3 unique destinations were addresses the app never sent a byte to.
+
+    Note fd 3 is reused throughout: two AF_UNIX sockets, the resolver's UDP
+    socket, a netlink socket, then the probes. Only the resolver's connect()
+    survives, and it survives because of the sendto() that follows it.
+    """
+    events, stats = parse_events(
+        '11 1787224802.263919 socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK, 0) = 3\n'
+        '11 1787224802.264111 connect(3, {sa_family=AF_UNIX, '
+        'sun_path="/var/run/nscd/socket"}, 110) = -1 ENOENT (No such file or directory)\n'
+        '11 1787224802.264465 socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC|SOCK_NONBLOCK, '
+        'IPPROTO_IP) = 3\n'
+        '11 1787224802.264573 connect(3, {sa_family=AF_INET, sin_port=htons(53), '
+        'sin_addr=inet_addr("192.168.65.7")}, 16) = 0\n'
+        '11 1787224802.264662 sendto(3, "l\\4\\1\\0", 29, MSG_NOSIGNAL, NULL, 0) = 29\n'
+        '11 1787224802.285025 recvfrom(3, "l\\4\\201\\200", 1024, 0, '
+        '{sa_family=AF_INET, sin_port=htons(53), '
+        'sin_addr=inet_addr("192.168.65.7")}, [28 => 16]) = 83\n'
+        '11 1787224802.285224 socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3\n'
+        '11 1787224802.285814 socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC, IPPROTO_IP) = 3\n'
+        '11 1787224802.285880 connect(3, {sa_family=AF_INET, sin_port=htons(0), '
+        'sin_addr=inet_addr("104.20.23.154")}, 16) = 0\n'
+        '11 1787224802.285969 getsockname(3, {sa_family=AF_INET, sin_port=htons(37034), '
+        'sin_addr=inet_addr("172.17.0.2")}, [28 => 16]) = 0\n'
+        '11 1787224802.286080 connect(3, {sa_family=AF_UNSPEC, sa_data="\\0\\0"}, 16) = 0\n'
+        '11 1787224802.286135 connect(3, {sa_family=AF_INET, sin_port=htons(0), '
+        'sin_addr=inet_addr("172.66.147.243")}, 16) = 0\n'
+        '11 1787224802.286193 getsockname(3, {sa_family=AF_INET, sin_port=htons(39758), '
+        'sin_addr=inet_addr("172.17.0.2")}, [28 => 16]) = 0\n'
+    )
+
+    assert [(e["dst_ip"], e["dst_port"]) for e in events] == [("192.168.65.7", 53)]
+    assert stats["udp_probes_skipped"] == 2
+
+
+def test_a_probe_and_real_traffic_on_the_same_fd_are_told_apart():
+    """fd reuse must not let the probe's silence cost the real socket its event.
+
+    Same fd number, two sockets: the first is connect()ed and never used, the
+    second sends. Keyed by (pid, fd) alone this is one socket with traffic, and
+    the probe would be reported; keyed by the connect count on that fd, only the
+    second survives.
+    """
+    events, stats = parse_events(
+        '7 1.0 socket(AF_INET, SOCK_DGRAM, IPPROTO_IP) = 4\n'
+        '7 1.1 connect(4, {sa_family=AF_INET, sin_port=htons(0), '
+        'sin_addr=inet_addr("203.0.113.9")}, 16) = 0\n'
+        '7 1.2 getsockname(4, {sa_family=AF_INET, sin_port=htons(1234)}, [16]) = 0\n'
+        '7 2.0 socket(AF_INET, SOCK_DGRAM, IPPROTO_IP) = 4\n'
+        '7 2.1 connect(4, {sa_family=AF_INET, sin_port=htons(53), '
+        'sin_addr=inet_addr("10.0.0.53")}, 16) = 0\n'
+        '7 2.2 sendto(4, "q", 1, MSG_NOSIGNAL, NULL, 0) = 1\n'
+    )
+
+    assert [(e["dst_ip"], e["dst_port"]) for e in events] == [("10.0.0.53", 53)]
+    assert stats["udp_probes_skipped"] == 1
+
+
+def test_traffic_before_a_probe_does_not_rescue_it():
+    """The real socket sends first, then the fd is reused for a probe.
+
+    The reverse order of the test above, which is the ordering a naive "did this
+    fd ever carry traffic" check gets wrong in the dangerous direction: it would
+    report the probe's address as a destination.
+    """
+    events, stats = parse_events(
+        '7 1.0 socket(AF_INET, SOCK_DGRAM, IPPROTO_IP) = 4\n'
+        '7 1.1 connect(4, {sa_family=AF_INET, sin_port=htons(53), '
+        'sin_addr=inet_addr("10.0.0.53")}, 16) = 0\n'
+        '7 1.2 sendto(4, "q", 1, MSG_NOSIGNAL, NULL, 0) = 1\n'
+        '7 2.0 socket(AF_INET, SOCK_DGRAM, IPPROTO_IP) = 4\n'
+        '7 2.1 connect(4, {sa_family=AF_INET, sin_port=htons(443), '
+        'sin_addr=inet_addr("203.0.113.9")}, 16) = 0\n'
+        '7 2.2 getsockname(4, {sa_family=AF_INET, sin_port=htons(1234)}, [16]) = 0\n'
+    )
+
+    assert [(e["dst_ip"], e["dst_port"]) for e in events] == [("10.0.0.53", 53)]
+    # Port 443, not 0: the filter is behavioural, and a probe to a real port is
+    # still a probe.
+    assert stats["udp_probes_skipped"] == 1
+
+
+def test_a_connect_answered_only_by_a_receive_is_kept():
+    """Errs towards reporting: a reply implies a request, even an untraced one."""
+    events, stats = parse_events(
+        '7 1.0 socket(AF_INET, SOCK_DGRAM, IPPROTO_IP) = 4\n'
+        '7 1.1 connect(4, {sa_family=AF_INET, sin_port=htons(123), '
+        'sin_addr=inet_addr("10.0.0.123")}, 16) = 0\n'
+        '7 1.2 recvfrom(4, "t", 48, 0, NULL, NULL) = 48\n'
+    )
+
+    assert [(e["dst_ip"], e["dst_port"]) for e in events] == [("10.0.0.123", 123)]
+    assert stats["udp_probes_skipped"] == 0
+
+
+def test_a_split_udp_connect_is_filtered_on_the_epoch_of_its_entry_line():
+    """The unfinished half carries the fd; the resumed half is where it is judged."""
+    events, stats = parse_events(
+        '7 1.0 socket(AF_INET, SOCK_DGRAM, IPPROTO_IP) = 4\n'
+        '7 1.1 connect(4, {sa_family=AF_INET, sin_port=htons(0), '
+        'sin_addr=inet_addr("203.0.113.9")}, 16 <unfinished ...>\n'
+        '7 1.2 <... connect resumed>) = 0\n'
+    )
+
+    assert events == []
+    assert stats["udp_probes_skipped"] == 1
+
+
+def test_a_silent_tcp_connect_is_still_egress():
+    """Only UDP is filtered: a TCP connect() puts a SYN on the wire by itself."""
+    events, stats = parse_events(
+        '7 1.0 socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) = 4\n'
+        '7 1.1 connect(4, {sa_family=AF_INET, sin_port=htons(443), '
+        'sin_addr=inet_addr("93.184.216.34")}, 16) = 0\n'
+    )
+
+    assert [(e["dst_ip"], e["proto"]) for e in events] == [("93.184.216.34", "tcp")]
+    assert stats["udp_probes_skipped"] == 0
+
+
+def test_a_silent_connect_on_an_unlabelled_socket_is_still_egress():
+    """No socket() line means no protocol, and a guess is not worth an omission."""
+    events, stats = parse_events(
+        '7 1.1 connect(9, {sa_family=AF_INET, sin_port=htons(53), '
+        'sin_addr=inet_addr("10.0.0.53")}, 16) = 0\n'
+    )
+
+    assert [(e["dst_ip"], e["proto"]) for e in events] == [("10.0.0.53", "unknown")]
+    assert stats["udp_probes_skipped"] == 0
+
+
+def test_a_payload_that_looks_like_a_connect_cannot_hide_a_destination():
+    """The traced process must not be able to delete its own events.
+
+    strace prints captured buffers verbatim, so a process can send a datagram
+    whose payload reads like a connect() line. If the pre-pass stopped at that
+    match instead of also recording the send, the socket would look silent and
+    its real destination would be filtered out -- a self-service exemption from
+    the ip/CIDR gate.
+    """
+    events, stats = parse_events(
+        '7 1.0 socket(AF_INET, SOCK_DGRAM, IPPROTO_IP) = 4\n'
+        '7 1.1 connect(4, {sa_family=AF_INET, sin_port=htons(53), '
+        'sin_addr=inet_addr("10.0.0.53")}, 16) = 0\n'
+        '7 1.2 sendto(4, "1 1.0 connect(1, junk", 21, MSG_NOSIGNAL, NULL, 0) = 21\n'
+    )
+
+    assert [(e["dst_ip"], e["dst_port"]) for e in events] == [("10.0.0.53", 53)]
+    assert stats["udp_probes_skipped"] == 0
+
+
+def test_a_refused_udp_connect_is_still_reported():
+    """Blocked egress is egress that was attempted.
+
+    Pointing a datagram socket at a peer is a local operation, so the sorting
+    probes always succeed; an error means something denied an attempt the app
+    made, and hiding that would understate the report in the one direction that
+    matters.
+    """
+    events, stats = parse_events(
+        '7 1.0 socket(AF_INET, SOCK_DGRAM, IPPROTO_IP) = 4\n'
+        '7 1.1 connect(4, {sa_family=AF_INET, sin_port=htons(53), '
+        'sin_addr=inet_addr("10.0.0.53")}, 16) = -1 EACCES (Permission denied)\n'
+    )
+
+    assert [(e["dst_ip"], e["result"], e["errno"]) for e in events] == [
+        ("10.0.0.53", "error", "EACCES")
+    ]
+    assert stats["udp_probes_skipped"] == 0
+
+
+def test_unconnected_udp_sends_are_untouched_by_the_probe_filter():
+    """dnspython's shape: sendto() names its own destination and never connects."""
+    events, stats = parse_events(
+        '7 1.0 socket(AF_INET, SOCK_DGRAM|SOCK_NONBLOCK, IPPROTO_IP) = 4\n'
+        '7 1.1 sendto(4, "q", 29, 0, {sa_family=AF_INET, sin_port=htons(53), '
+        'sin_addr=inet_addr("10.0.0.53")}, 16) = 29\n'
+    )
+
+    assert [(e["dst_ip"], e["event"]) for e in events] == [("10.0.0.53", "sendto")]
+    assert stats["udp_probes_skipped"] == 0
+
+
 if __name__ == "__main__":
     print("Testing strace parser...")
     test_parse_strace_line()
@@ -455,4 +668,14 @@ if __name__ == "__main__":
     test_parse_split_send_line()
     test_truncated_send_line_is_not_given_a_fabricated_result()
     test_parse_to_jsonl_captures_unconnected_udp()
+    test_udp_connect_without_traffic_is_not_reported_as_egress()
+    test_a_probe_and_real_traffic_on_the_same_fd_are_told_apart()
+    test_traffic_before_a_probe_does_not_rescue_it()
+    test_a_connect_answered_only_by_a_receive_is_kept()
+    test_a_split_udp_connect_is_filtered_on_the_epoch_of_its_entry_line()
+    test_a_silent_tcp_connect_is_still_egress()
+    test_a_silent_connect_on_an_unlabelled_socket_is_still_egress()
+    test_a_payload_that_looks_like_a_connect_cannot_hide_a_destination()
+    test_a_refused_udp_connect_is_still_reported()
+    test_unconnected_udp_sends_are_untouched_by_the_probe_filter()
     print("\nAll tests passed! ✓")

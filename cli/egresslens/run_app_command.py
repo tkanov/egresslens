@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
-from egresslens.docker_runner import SETUP_FAILED_EXIT_CODE, run_python_app
+from egresslens.docker_runner import run_python_app, setup_step_failed
 from egresslens.metadata import (
     clear_run_artifacts,
     count_events_from_jsonl,
@@ -34,20 +34,22 @@ def run_app_command(
     Returns:
         Exit code from the executed app
     """
+    # Create output directory
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Cleared before anything can fail, deliberately ahead of validation: what
+    # remains here afterwards is this run and nothing else. Every early return
+    # below is then safe by construction, which validation was not -- returning
+    # before this point left the previous run's report in place, complete with
+    # its exit_code 0, for `check` to gate a build on.
+    clear_run_artifacts(output_dir)
+
     # Validate app directory and get metadata
     try:
         app_meta = validate_app_directory(app_path)
     except AppValidationError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
-
-    # Create output directory
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Everything left in here is about to be replaced, so drop it first: what
-    # remains afterwards is then this run and nothing else. Not doing this let a
-    # run that wrote no report at all keep the last one's, exit code included.
-    clear_run_artifacts(output_dir)
 
     # Prepare paths
     app_path_obj = Path(app_meta["app_path"])
@@ -70,8 +72,9 @@ def run_app_command(
     # A failed dependency install means the app never started, so there is no
     # capture to report on. Writing the usual zero-event report here would look
     # exactly like a run that made no network calls, which is the one thing a
-    # report must never claim by accident.
-    if app_meta["has_requirements"] and exit_code == SETUP_FAILED_EXIT_CODE:
+    # report must never claim by accident. setup_step_failed also checks the
+    # trace, so an app that exits 90 on its own keeps the report it earned.
+    if app_meta["has_requirements"] and setup_step_failed(exit_code, strace_path):
         print(f"Error: {error}", file=sys.stderr)
         print("No report was written.", file=sys.stderr)
         return exit_code
@@ -91,6 +94,7 @@ def run_app_command(
         jsonl_path.touch()
 
     ipv6_connects_skipped = parse_stats.get("ipv6_connects_skipped", 0)
+    udp_probes_skipped = parse_stats.get("udp_probes_skipped", 0)
 
     # Count events from JSONL
     total_events, unique_dst_ips, unique_dst_ip_ports = count_events_from_jsonl(jsonl_path)
@@ -116,6 +120,7 @@ def run_app_command(
         unique_dst_ips=unique_dst_ips,
         unique_dst_ip_ports=unique_dst_ip_ports,
         ipv6_connects_skipped=ipv6_connects_skipped,
+        udp_probes_skipped=udp_probes_skipped,
     )
 
     # Write metadata
@@ -129,6 +134,11 @@ def run_app_command(
     print(f"  Unique destinations: {unique_dst_ips} IPs, {unique_dst_ip_ports} IP:port pairs")
     if ipv6_connects_skipped:
         print(f"  Note: {ipv6_connects_skipped} IPv6 connection(s) not captured (IPv4 only)")
+    if udp_probes_skipped:
+        print(
+            f"  Note: {udp_probes_skipped} UDP connect(s) excluded as address-selection "
+            "probes (nothing was sent on those sockets)"
+        )
     if app_meta["has_requirements"]:
         print("  Dependencies: Installed from requirements.txt before tracing started")
         print("                (pip's own egress is not in this report; output in pip_install.log)")

@@ -41,7 +41,16 @@ server.close()
 
 udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp.connect(("127.0.0.1", 9))
+udp.send(b"x")
 udp.close()
+
+# Shaped like glibc's RFC 6724 address-selection probe: connect() a UDP socket,
+# ask the kernel which source address it would use, send nothing. No packet
+# leaves the host, so this must not be reported as a destination.
+probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+probe.connect(("127.0.0.1", 10))
+probe.getsockname()
+probe.close()
 """
 
 
@@ -117,7 +126,8 @@ def test_real_strace_protocol_detection() -> None:
             f"stderr:\n{result.stderr}"
         )
 
-        parsed_count = parse_to_jsonl(strace_path, jsonl_path)
+        stats: dict = {}
+        parsed_count = parse_to_jsonl(strace_path, jsonl_path, stats)
         events = load_jsonl(jsonl_path)
         context = failure_context(strace_path, events)
 
@@ -130,9 +140,18 @@ def test_real_strace_protocol_detection() -> None:
         assert any(
             event["proto"] == "tcp" and event["result"] == "ok" for event in loopback_events
         ), context
+        # Port 9 was connected AND sent on, so it is egress.
         assert any(
             event["proto"] == "udp" and event["dst_port"] == 9 for event in loopback_events
         ), context
+
+        # Port 10 was connected and never sent on. connect() on a UDP socket puts
+        # no packet on the wire, so reporting it would name a destination the
+        # program never reached -- and it is counted rather than dropped in
+        # silence. Verified against real strace output because the filter reads a
+        # syscall sequence no mocked test would produce.
+        assert not any(event["dst_port"] == 10 for event in events), context
+        assert stats["udp_probes_skipped"] >= 1, f"{stats}\n{context}"
 
         print("✓ Real strace output produced TCP and UDP protocol labels")
 

@@ -9,29 +9,55 @@ from typing import Optional
 # repeated so the two cannot drift apart.
 from egresslens.docker_runner import PIP_LOG_NAME
 
-# Every file a capture writes into its output directory.
-RUN_ARTIFACT_NAMES = (
-    "egress.jsonl",
-    "run.json",
-    "egress.strace",
+# Artifacts the container creates inside the output directory once it is
+# bind-mounted at /output: the traced command's two streams and pip's log by
+# shell redirection, the trace by strace -o.
+CONTAINER_WRITTEN_ARTIFACTS = (
     "cmd_stdout",
     "cmd_stderr",
     PIP_LOG_NAME,
+    "egress.strace",
 )
+
+# Artifacts this process writes on the host, after the container has exited.
+HOST_WRITTEN_ARTIFACTS = (
+    "egress.jsonl",
+    "run.json",
+)
+
+# Every file a capture writes into its output directory.
+RUN_ARTIFACT_NAMES = CONTAINER_WRITTEN_ARTIFACTS + HOST_WRITTEN_ARTIFACTS
 
 
 def clear_run_artifacts(output_dir: Path) -> None:
-    """Remove the artifacts of any earlier run from an output directory.
+    """Clear the artifacts of any earlier run from an output directory.
 
     The directory has to describe the run that just happened. Without this, a run
     that produces fewer files than the last one -- or none at all, when a
     dependency install fails before the app starts -- leaves the previous run's
     report in place, where a reader or a CI gate reads it as this run's result.
 
-    Only the names in RUN_ARTIFACT_NAMES are removed, never a glob: --out is a
-    user-supplied path that may well hold files this tool did not write.
+    The container-written ones are TRUNCATED, not removed, and that is not a
+    stylistic choice. This directory is about to be bind-mounted at /output, and
+    on Docker Desktop's shared filesystem deleting a file here leaves the guest
+    unable to re-create it: the redirection fails with "cannot create
+    /output/cmd_stderr: Directory nonexistent", sh exits 2, and the traced
+    command never runs -- measured on 7 of 12 repeat runs, with the empty capture
+    then reported as a quiet run. Truncating keeps the dentry the guest reopens
+    and still leaves no stale content behind.
+
+    Only the names above are touched, never a glob: --out is a user-supplied path
+    that may well hold files this tool did not write.
     """
-    for name in RUN_ARTIFACT_NAMES:
+    for name in CONTAINER_WRITTEN_ARTIFACTS:
+        artifact = output_dir / name
+        if artifact.is_file():
+            with open(artifact, "wb"):
+                pass
+
+    # Removed rather than truncated, so "no report" is the absence of a report
+    # and not a zero-byte one that a reader has to interpret.
+    for name in HOST_WRITTEN_ARTIFACTS:
         artifact = output_dir / name
         if artifact.is_file():
             artifact.unlink()
@@ -50,6 +76,7 @@ def generate_metadata(
     unique_dst_ips: int,
     unique_dst_ip_ports: int,
     ipv6_connects_skipped: int = 0,
+    udp_probes_skipped: int = 0,
 ) -> dict:
     """Generate run metadata dictionary.
 
@@ -67,6 +94,11 @@ def generate_metadata(
         unique_dst_ip_ports: Number of unique destination IP:port pairs
         ipv6_connects_skipped: AF_INET6 connect() attempts that were observed but
             not captured (IPv4 only)
+        udp_probes_skipped: UDP connect() calls excluded because nothing was ever
+            sent on the socket, so no packet reached the address (see
+            strace_parser.is_silent_udp_connect). Reported rather than dropped
+            silently: the number is the difference between what the trace shows
+            and what the report claims.
 
     Returns:
         Metadata dictionary
@@ -85,6 +117,7 @@ def generate_metadata(
             "unique_dst_ips": unique_dst_ips,
             "unique_dst_ip_ports": unique_dst_ip_ports,
             "ipv6_connects_skipped": ipv6_connects_skipped,
+            "udp_probes_skipped": udp_probes_skipped,
         },
     }
 

@@ -14,6 +14,7 @@ runner, because this is the module with the faked docker CLI.
 import json
 import shlex
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -27,6 +28,7 @@ from egresslens.docker_runner import (
     DockerRunner,
     run_python_app,
 )
+from egresslens.metadata import clear_run_artifacts
 from egresslens.run_app_command import run_app_command
 from egresslens.watch import watch_command
 
@@ -124,8 +126,20 @@ def test_command_stdout_and_stderr_are_captured_to_output():
 
 # --- container hardening: reduced isolation, so pin what is compensating -------
 
-def fake_subprocess(monkeypatch, image_present=True, exit_code="0"):
-    """Replace subprocess.run with a recorder that fakes the docker CLI."""
+def output_mount(cmd: list) -> Path:
+    """The host directory the fake container has bind-mounted at /output."""
+    volume = next(arg for arg in cmd if arg.endswith(":/output:rw"))
+    return Path(volume[: -len(":/output:rw")])
+
+
+def fake_subprocess(monkeypatch, image_present=True, exit_code="0", trace_written=None):
+    """Replace subprocess.run with a recorder that fakes the docker CLI.
+
+    trace_written, when given, is what the fake container writes to
+    egress.strace, which is how a test says "strace really ran". The path comes
+    from the /output bind mount in the recorded argv, the same way the real
+    container finds it.
+    """
     calls = []
 
     def run(cmd, **kwargs):
@@ -133,6 +147,8 @@ def fake_subprocess(monkeypatch, image_present=True, exit_code="0"):
         if cmd[:3] == ["docker", "image", "inspect"]:
             return SimpleNamespace(returncode=0 if image_present else 1, stdout="", stderr="")
         if len(cmd) > 1 and cmd[1] == "run":
+            if trace_written is not None:
+                (output_mount(cmd) / "egress.strace").write_text(trace_written)
             return SimpleNamespace(returncode=0, stdout="container123\n", stderr="")
         if len(cmd) > 1 and cmd[1] == "inspect":
             return SimpleNamespace(returncode=0, stdout=f"{exit_code}\n", stderr="")
@@ -485,6 +501,9 @@ def seed_previous_run(output_dir):
         '1 1.0 connect(3, {sa_family=AF_INET, sin_port=htons(443), '
         'sin_addr=inet_addr("93.184.216.34")}, 16) = 0\n'
     )
+    (output_dir / "cmd_stdout").write_text("output of the previous run\n")
+    (output_dir / "cmd_stderr").write_text("warnings from the previous run\n")
+    (output_dir / PIP_LOG_NAME).write_text("pip output from the previous run\n")
 
 
 def test_a_failed_install_removes_the_previous_runs_report(monkeypatch, tmp_path, capsys):
@@ -508,7 +527,10 @@ def test_a_failed_install_removes_the_previous_runs_report(monkeypatch, tmp_path
     assert exit_code == SETUP_FAILED_EXIT_CODE
     assert not (output_dir / "run.json").exists()
     assert not (output_dir / "egress.jsonl").exists()
-    assert not (output_dir / "egress.strace").exists()
+    # Emptied rather than deleted, for the reason clear_run_artifacts documents,
+    # and empty is also what tells run_python_app the install never got as far as
+    # running strace.
+    assert (output_dir / "egress.strace").read_bytes() == b""
     assert "No report was written." in capsys.readouterr().err
 
 
@@ -546,9 +568,127 @@ def test_watch_does_not_report_a_previous_runs_trace(monkeypatch, tmp_path):
     )
 
     assert exit_code == 1
-    assert not (output_dir / "egress.strace").exists()
+    assert (output_dir / "egress.strace").read_bytes() == b""
     metadata = json.loads((output_dir / "run.json").read_text())
     assert metadata["counts"]["total_events"] == 0
+
+
+def test_container_written_artifacts_are_emptied_and_not_unlinked(monkeypatch, tmp_path):
+    """Truncation is load-bearing, so it is pinned by inode, not just by content.
+
+    The output directory is bind-mounted at /output, and the container re-creates
+    these four by shell redirection or `strace -o`. Unlinking them left the guest
+    unable to: the redirection failed, sh exited 2 and the traced command never
+    ran, on 7 of 12 repeat runs. That crash is only reproducible against a real
+    container -- this test pins the property that prevents it.
+    """
+    fake_subprocess(monkeypatch)
+    output_dir = tmp_path / "out"
+    seed_previous_run(output_dir)
+    inodes = {
+        name: (output_dir / name).stat().st_ino
+        for name in ("cmd_stdout", "cmd_stderr", PIP_LOG_NAME, "egress.strace")
+    }
+
+    clear_run_artifacts(output_dir)
+
+    for name, inode in inodes.items():
+        artifact = output_dir / name
+        assert artifact.exists(), f"{name} was removed; the container cannot re-create it"
+        assert artifact.stat().st_ino == inode, f"{name} was replaced rather than truncated"
+        assert artifact.read_bytes() == b"", f"{name} kept the previous run's content"
+
+    # The two this process writes itself are removed, so "no report" is the
+    # absence of a report rather than a zero-byte one.
+    assert not (output_dir / "egress.jsonl").exists()
+    assert not (output_dir / "run.json").exists()
+
+
+def test_a_validation_failure_does_not_leave_the_previous_report_behind(
+    monkeypatch, tmp_path, capsys
+):
+    """The false PASS this closes: `check` gating a build on the last run's report.
+
+    Validation fails before any container starts, so this run produces nothing --
+    and it used to return before the directory was cleared, leaving a complete
+    report with exit_code 0 for the gate to read as this run's result.
+    """
+    calls = fake_subprocess(monkeypatch)
+    output_dir = tmp_path / "out"
+    seed_previous_run(output_dir)
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "app.py").write_text("def unclosed(\n")
+
+    exit_code = run_app_command(
+        app_path=str(broken),
+        app_args=[],
+        output_dir=output_dir,
+        image=DEFAULT_IMAGE,
+    )
+
+    assert exit_code == 1
+    assert "Invalid Python syntax" in capsys.readouterr().err
+    assert not (output_dir / "run.json").exists()
+    assert not (output_dir / "egress.jsonl").exists()
+    assert not any(len(cmd) > 1 and cmd[1] == "run" for cmd in calls), "nothing should have run"
+
+
+def test_an_app_that_exits_90_keeps_the_capture_it_earned(monkeypatch, tmp_path, capsys):
+    """The reserved status is not proof by itself; the trace says who ran.
+
+    An app with a requirements.txt is free to exit 90, and treating that as a
+    failed install threw its complete capture away and replaced it with a
+    diagnostic about pip that was simply false.
+    """
+    fake_subprocess(
+        monkeypatch,
+        exit_code=str(SETUP_FAILED_EXIT_CODE),
+        trace_written=(
+            '1 1.0 socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC, IPPROTO_TCP) = 3\n'
+            '1 1.1 connect(3, {sa_family=AF_INET, sin_port=htons(443), '
+            'sin_addr=inet_addr("93.184.216.34")}, 16) = 0\n'
+        ),
+    )
+    output_dir = tmp_path / "out"
+
+    exit_code = run_app_command(
+        app_path=str(python_app(tmp_path)),
+        app_args=[],
+        output_dir=output_dir,
+        image=DEFAULT_IMAGE,
+    )
+
+    assert exit_code == SETUP_FAILED_EXIT_CODE
+    assert "requirements.txt failed" not in capsys.readouterr().err
+    metadata = json.loads((output_dir / "run.json").read_text())
+    assert metadata["exit_code"] == SETUP_FAILED_EXIT_CODE
+    assert metadata["counts"]["total_events"] == 1
+
+
+def test_an_emptied_trace_still_reads_as_a_failed_install(monkeypatch, tmp_path):
+    """clear_run_artifacts leaves an empty trace file, not a missing one.
+
+    So the install-failure test has to treat empty and absent alike, or a second
+    run into the same directory would stop recognising a failed install.
+    """
+    fake_subprocess(monkeypatch, exit_code=str(SETUP_FAILED_EXIT_CODE))
+    strace_path = tmp_path / "out" / "egress.strace"
+    strace_path.parent.mkdir(parents=True)
+    strace_path.write_bytes(b"")
+
+    exit_code, error = run_python_app(
+        app_path=python_app(tmp_path),
+        entry_point="app.py",
+        app_args=[],
+        has_requirements=True,
+        image=DEFAULT_IMAGE,
+        strace_output_path=strace_path,
+    )
+
+    assert exit_code == SETUP_FAILED_EXIT_CODE
+    assert error is not None
+    assert "requirements.txt" in error
 
 
 def main():
