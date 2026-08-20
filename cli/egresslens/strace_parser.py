@@ -16,6 +16,13 @@ PendingSocketState = dict[int, str]
 PendingConnectState = dict[int, dict]
 PendingSendState = dict[int, list]
 
+# (pid, fd, nth connect on that fd). A bare (pid, fd) is not enough to ask "did
+# this socket carry traffic": fds are recycled aggressively -- one real trace
+# reuses fd 3 for two AF_UNIX sockets, the resolver's UDP socket, a netlink
+# socket and two address-sorting probes -- so the count of connect() calls seen
+# on the fd is what separates one socket's traffic from the next one's.
+SocketEpoch = tuple[int, int, int]
+
 # Syscalls in strace's `network` class that carry an explicit destination
 # sockaddr. connect() covers the connection-oriented case; the send* family
 # names its destination per-call whenever the socket is unconnected, which is how
@@ -73,6 +80,22 @@ _UNFINISHED_SOCKET_RE = re.compile(
 )
 
 _RESUMED_SOCKET_RE = re.compile(r"(\d+)\s+[\d.]+\s+<\.\.\. socket resumed>\)?\s*=\s*(-?\d+)")
+
+# Syscalls that prove data actually crossed the socket. The send* family is the
+# transmission itself; the recv* family is included because a connected client
+# socket does not receive without having sent, and counting it makes the
+# no-traffic test below err towards keeping an event rather than dropping one.
+TRAFFIC_SYSCALLS = SEND_SYSCALLS + ("recvfrom", "recvmsg", "recvmmsg")
+
+# Any connect() *entry* line, whatever the address family, so both passes over
+# the trace count socket epochs the same way. Resumed lines are excluded by
+# construction: they read `<... connect resumed>` and carry no fd. AF_UNSPEC
+# disconnects are counted, which is correct -- they end the socket's epoch.
+_CONNECT_FD_RE = re.compile(r"(\d+)\s+[\d.]+\s+connect\((\d+),")
+
+_TRAFFIC_FD_RE = re.compile(
+    r"(\d+)\s+[\d.]+\s+(?:" + "|".join(TRAFFIC_SYSCALLS) + r")\((\d+)"
+)
 
 
 def parse_socket_line(line: str) -> Optional[tuple[int, int, str]]:
@@ -158,6 +181,110 @@ def is_ipv6_connect_line(line: str) -> bool:
     return "connect(" in line and "sa_family=AF_INET6" in line
 
 
+def parse_connect_fd(line: str) -> Optional[tuple[int, int]]:
+    """Return (pid, fd) for any connect() entry line, of any address family."""
+    match = _CONNECT_FD_RE.search(line)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def parse_traffic_fd(line: str) -> Optional[tuple[int, int]]:
+    """Return (pid, fd) for a line that sent or received on a socket."""
+    match = _TRAFFIC_FD_RE.search(line)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _open_socket_epoch(epochs: dict, pid: int, fd: int) -> SocketEpoch:
+    """Start the next epoch for (pid, fd) and return its key."""
+    epoch = epochs.get((pid, fd), 0) + 1
+    epochs[(pid, fd)] = epoch
+    return pid, fd, epoch
+
+
+def _current_socket_epoch(epochs: dict, pid: int, fd: int) -> SocketEpoch:
+    """The epoch traffic on (pid, fd) belongs to. Epoch 0 is before any connect."""
+    return pid, fd, epochs.get((pid, fd), 0)
+
+
+def sockets_with_traffic(strace_path: Path) -> set:
+    """Pre-pass: every socket epoch that sent or received something.
+
+    Needed because whether a connect() is egress can only be answered by what
+    happens *after* it, and the parser yields events as it reads.
+
+    Every line is offered to both tests, with no short-circuit between them, so
+    this pass reaches the same conclusions as the main one line for line. The
+    asymmetry matters: strace prints captured payloads verbatim, so a traced
+    process can put connect-shaped text inside a datagram it sends. Skipping the
+    traffic test for such a line would leave its own socket looking silent, and
+    the process could delete a real destination of its choosing from the report
+    -- against an ip/CIDR gate that is documented as being beyond its influence.
+    """
+    epochs: dict = {}
+    seen = set()
+
+    with open(strace_path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            connect_fd = parse_connect_fd(line)
+            if connect_fd:
+                _open_socket_epoch(epochs, *connect_fd)
+
+            traffic_fd = parse_traffic_fd(line)
+            if traffic_fd:
+                seen.add(_current_socket_epoch(epochs, *traffic_fd))
+
+    return seen
+
+
+def is_silent_udp_connect(
+    event: dict,
+    epoch: Optional[SocketEpoch],
+    epochs_with_traffic: set,
+) -> bool:
+    """Whether a connect() event transmitted nothing and is therefore not egress.
+
+    glibc's RFC 3484/6724 destination sorting connect()s a UDP socket to each
+    candidate answer address and immediately calls getsockname(), purely to learn
+    which source address the kernel would choose. connect() on a UDP socket sends
+    no packet, so nothing is transmitted and the address was never contacted --
+    but the syscall looks exactly like egress, which made any app that merely
+    resolved a hostname report destinations it never talked to. Reported per
+    address, so one getaddrinfo() with four answers invented four destinations.
+
+    The test is behavioural, not a port check. Those probes usually carry
+    ``sin_port=htons(0)``, but not always, and a real datagram can legitimately
+    go to port 0; what distinguishes them is that no send or receive ever follows
+    on the same socket. A connect() that *is* followed by traffic -- including
+    the connected-socket ``sendto(fd, ..., NULL, 0)`` form, which names no
+    address of its own -- is real egress and is kept.
+
+    Only udp is filtered. A TCP connect() transmits a SYN by itself, and a socket
+    whose protocol was never observed stays "unknown" and is left alone rather
+    than guessed at.
+
+    A UDP connect() that *failed* is also kept. Setting a datagram socket's peer
+    is a local operation, so the probes succeed; an EACCES or ENETUNREACH means
+    something refused an attempt the app actually made, and dropping that would
+    hide blocked egress -- which the events loader deliberately reports for the
+    same reason.
+
+    Two shapes stay fail-closed, both requiring untraced syscalls: a connected
+    UDP socket written with write() rather than send*(), and traffic sent through
+    a dup() of the connected fd. ``-e trace=network`` records neither, so neither
+    can be told apart from a probe here.
+    """
+    if event["proto"] != "udp":
+        return False
+    if event.get("result") != "ok":
+        return False
+    if epoch is None:
+        return False
+    return epoch not in epochs_with_traffic
+
+
 def parse_strace_file(strace_path: Path, stats: Optional[dict] = None) -> Iterator[dict]:
     """Parse strace output file and yield egress events.
 
@@ -167,8 +294,10 @@ def parse_strace_file(strace_path: Path, stats: Optional[dict] = None) -> Iterat
     Args:
         strace_path: Path to strace output file
         stats: Optional dict populated with parse counters once the file is fully
-            consumed. Currently records ``ipv6_connects_skipped`` (AF_INET6
-            connect() attempts that were counted but not captured).
+            consumed. Records ``ipv6_connects_skipped`` (AF_INET6 connect()
+            attempts that were counted but not captured) and
+            ``udp_probes_skipped`` (UDP connect() calls that transmitted nothing,
+            see is_silent_udp_connect).
 
     Yields:
         Event dictionaries matching the JSONL schema
@@ -178,11 +307,24 @@ def parse_strace_file(strace_path: Path, stats: Optional[dict] = None) -> Iterat
     pending_connects: PendingConnectState = {}
     pending_sends: PendingSendState = {}
     ipv6_connects_skipped = 0
+    udp_probes_skipped = 0
+
+    epochs_with_traffic = sockets_with_traffic(strace_path)
+    socket_epochs: dict = {}
+    pending_connect_epochs: dict = {}
 
     with open(strace_path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
             if is_ipv6_connect_line(line):
                 ipv6_connects_skipped += 1
+
+            # Before any branch below can `continue`, and with the same rule the
+            # pre-pass used, or the two passes would disagree about which socket
+            # a given epoch is.
+            connect_fd = parse_connect_fd(line)
+            connect_epoch = (
+                _open_socket_epoch(socket_epochs, *connect_fd) if connect_fd else None
+            )
 
             socket_info = parse_socket_line(line)
             if socket_info:
@@ -211,16 +353,21 @@ def parse_strace_file(strace_path: Path, stats: Optional[dict] = None) -> Iterat
             if pending_connect:
                 pid, event = pending_connect
                 pending_connects[pid] = event
+                pending_connect_epochs[pid] = connect_epoch
                 continue
 
             resumed_connect = parse_resumed_connect_line(line)
             if resumed_connect:
                 pid, result_code, errno = resumed_connect
                 event = pending_connects.pop(pid, None)
+                epoch = pending_connect_epochs.pop(pid, None)
                 if event:
                     event["result"] = "ok" if result_code == 0 else "error"
                     event["errno"] = errno
-                    yield event
+                    if is_silent_udp_connect(event, epoch, epochs_with_traffic):
+                        udp_probes_skipped += 1
+                    else:
+                        yield event
                 continue
 
             pending_send = parse_unfinished_send_line(line, socket_state)
@@ -247,10 +394,14 @@ def parse_strace_file(strace_path: Path, stats: Optional[dict] = None) -> Iterat
 
             event = parse_strace_line(line, socket_state)
             if event:
-                yield event
+                if is_silent_udp_connect(event, connect_epoch, epochs_with_traffic):
+                    udp_probes_skipped += 1
+                else:
+                    yield event
 
     if stats is not None:
         stats["ipv6_connects_skipped"] = ipv6_connects_skipped
+        stats["udp_probes_skipped"] = udp_probes_skipped
 
 
 def build_connect_event(
@@ -457,8 +608,9 @@ def parse_to_jsonl(strace_path: Path, output_path: Path, stats: Optional[dict] =
     Args:
         strace_path: Path to strace output file
         output_path: Path to write JSONL output
-        stats: Optional dict populated with parse counters (e.g.
-            ``ipv6_connects_skipped``) after the file is fully parsed.
+        stats: Optional dict populated with parse counters
+            (``ipv6_connects_skipped``, ``udp_probes_skipped``) after the file is
+            fully parsed.
 
     Returns:
         Number of events parsed

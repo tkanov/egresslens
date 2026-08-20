@@ -35,16 +35,21 @@ object:
 ```json
 {
   "allow": [
+    "example.com",
     "*.github.com",
-    "pypi.org",
     "140.82.112.0/20",
-    { "domain": "files.pythonhosted.org" },
-    { "ip": "151.101.0.0/16", "port": 443 }
+    { "domain": "crt.sh" },
+    { "ip": "91.199.212.73", "port": 443 }
   ]
 }
 ```
 
-- A **domain** matches exactly (`pypi.org`), or as a leading-wildcard covering
+Keep `ip` rules as narrow as the destination allows. A range shared by many
+tenants, such as a CDN's `151.101.0.0/16`, admits every one of them, which turns
+the hard gate into a formality. The CLI installs `requirements.txt` before
+tracing starts, so PyPI and its CDN are not observed and need no rules.
+
+- A **domain** matches exactly (`example.com`), or as a leading-wildcard covering
   subdomains only (`*.github.com` matches `api.github.com`, not the apex or
   `notgithub.com`).
 - An **ip** is a single address or a CIDR range.

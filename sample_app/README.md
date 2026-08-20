@@ -17,8 +17,9 @@ egresslens run-app ./sample_app --args "all python.org"
 ```
 
 `run-app` discovers the entry point (`app.py` here), installs
-`requirements.txt` inside the container, and writes the trace to
-`egresslens-output/`.
+`requirements.txt` inside the container before tracing starts, and writes the
+trace to `egresslens-output/`. `requests` and `dnspython` are fetched from PyPI,
+which is not in the trace: only the app is.
 
 Use `run-app` rather than `watch` for this app: `watch` runs a command in the
 tracing image as-is and never installs dependencies, and the base image has

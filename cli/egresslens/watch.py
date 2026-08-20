@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Sequence
 
 from egresslens.docker_runner import run_docker_command
-from egresslens.metadata import count_events_from_jsonl, generate_metadata, write_metadata
+from egresslens.metadata import (
+    clear_run_artifacts,
+    count_events_from_jsonl,
+    generate_metadata,
+    write_metadata,
+)
 from egresslens.strace_parser import parse_to_jsonl
 
 
@@ -28,6 +33,11 @@ def watch_command(
     """
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Same invariant as run-app: the directory describes this run only. A
+    # container that never starts writes no trace, and the previous run's would
+    # otherwise be parsed and reported as this one's.
+    clear_run_artifacts(output_dir)
 
     # Get current working directory
     cwd = Path.cwd()
@@ -63,6 +73,7 @@ def watch_command(
         jsonl_path.touch()
 
     ipv6_connects_skipped = parse_stats.get("ipv6_connects_skipped", 0)
+    udp_probes_skipped = parse_stats.get("udp_probes_skipped", 0)
 
     # Count events from JSONL
     total_events, unique_dst_ips, unique_dst_ip_ports = count_events_from_jsonl(jsonl_path)
@@ -82,6 +93,7 @@ def watch_command(
         unique_dst_ips=unique_dst_ips,
         unique_dst_ip_ports=unique_dst_ip_ports,
         ipv6_connects_skipped=ipv6_connects_skipped,
+        udp_probes_skipped=udp_probes_skipped,
     )
 
     # Write metadata
@@ -97,6 +109,12 @@ def watch_command(
         print(f"  Unique destination IP:port pairs: {unique_dst_ip_ports}", file=sys.stdout)
     if ipv6_connects_skipped:
         print(f"  Note: {ipv6_connects_skipped} IPv6 connection(s) not captured (IPv4 only)", file=sys.stdout)
+    if udp_probes_skipped:
+        print(
+            f"  Note: {udp_probes_skipped} UDP connect(s) excluded as address-selection "
+            "probes (nothing was sent on those sockets)",
+            file=sys.stdout,
+        )
     print("  Files written:", file=sys.stdout)
     print(f"    - {jsonl_path.relative_to(output_dir)} ({total_events} events)", file=sys.stdout)
     print(f"    - {metadata_path.relative_to(output_dir)} (metadata)", file=sys.stdout)

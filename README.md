@@ -76,6 +76,8 @@ egresslens watch -- curl https://example.com            # any command
 
 `run-app` looks for an entry point named `__main__.py`, `main.py`, or `app.py`. Options: `--args` (arguments for the traced app), `--out` (output path), `--image` (another image with `strace` installed).
 
+`run-app` installs `requirements.txt` before tracing starts, so the trace covers the app and not pip. PyPI and its CDN are deliberately absent from the report; pip's output lands in `pip_install.log`, and a failed install exits 90 without writing a report.
+
 > **Known bug:** `__main__.py` is checked first but fails with `ModuleNotFoundError`, because the runner invokes it in a way that leaves the module off `sys.path`. Use `main.py` or `app.py` for now.
 
 More detail: [cli/README.md](cli/README.md).
