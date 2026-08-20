@@ -540,6 +540,7 @@ def test_a_failing_verdict_overrides_a_successful_command(tmp_path, monkeypatch)
     check = RecordingCheck(EXIT_FAIL)
     monkeypatch.setattr(cli_main, "watch_command", lambda **kwargs: 0)
     monkeypatch.setattr(cli_main, "check_command", check)
+    write_events(tmp_path / "out", [connect("1.2.3.4")])
 
     result = CliRunner().invoke(
         cli,
@@ -554,6 +555,7 @@ def test_a_passing_verdict_preserves_the_command_exit_code(tmp_path, monkeypatch
     check = RecordingCheck(EXIT_PASS)
     monkeypatch.setattr(cli_main, "watch_command", lambda **kwargs: 7)
     monkeypatch.setattr(cli_main, "check_command", check)
+    write_events(tmp_path / "out", [connect("1.2.3.4")])
 
     result = CliRunner().invoke(
         cli,
@@ -570,6 +572,7 @@ def test_an_inconclusive_verdict_wins_over_the_command_exit_code(tmp_path, monke
     monkeypatch.setattr(cli_main, "check_command", check)
     app_dir = tmp_path / "app"
     app_dir.mkdir()
+    write_events(tmp_path / "out", [connect("1.2.3.4")])
 
     result = CliRunner().invoke(
         cli,
@@ -577,6 +580,64 @@ def test_an_inconclusive_verdict_wins_over_the_command_exit_code(tmp_path, monke
          "--policy", str(tmp_path / "p.json")],
     )
     assert result.exit_code == EXIT_INCONCLUSIVE
+    assert len(check.calls) == 1
+
+
+def test_a_capture_that_wrote_no_report_keeps_its_own_status(tmp_path, monkeypatch):
+    """`run-app`'s documented 90 has to survive --policy, and so does its 1.
+
+    A failed dependency install writes no events file, so there is nothing to
+    judge; gating anyway replaced 90 with a 2 that reads as "malformed
+    allowlist", in exactly the configuration the README recommends for CI.
+    """
+    check = RecordingCheck(EXIT_FAIL)
+    monkeypatch.setattr(cli_main, "check_command", check)
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    out = tmp_path / "out"
+    out.mkdir()
+
+    for capture_code in (90, 1):
+        monkeypatch.setattr(cli_main, "run_app_command", lambda **kwargs: capture_code)
+        result = CliRunner().invoke(
+            cli,
+            ["run-app", str(app_dir), "--out", str(out), "--policy", str(tmp_path / "p.json")],
+        )
+        assert result.exit_code == capture_code
+    assert check.calls == []
+
+
+def test_a_failing_capture_that_did_write_a_report_is_still_judged(tmp_path, monkeypatch):
+    """The status alone is ambiguous: an app may exit 90 itself, and that run has
+    a report. Only the missing report excuses a capture from the gate."""
+    check = RecordingCheck(EXIT_FAIL)
+    monkeypatch.setattr(cli_main, "run_app_command", lambda **kwargs: 90)
+    monkeypatch.setattr(cli_main, "check_command", check)
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    out = tmp_path / "out"
+    write_events(out, [connect("1.2.3.4")])
+
+    result = CliRunner().invoke(
+        cli,
+        ["run-app", str(app_dir), "--out", str(out), "--policy", str(tmp_path / "p.json")],
+    )
+    assert result.exit_code == EXIT_FAIL
+    assert len(check.calls) == 1
+
+
+def test_a_successful_capture_with_no_report_is_not_excused(tmp_path, monkeypatch):
+    """Exit 0 and no events file must reach the gate, and error there."""
+    check = RecordingCheck(EXIT_ERROR)
+    monkeypatch.setattr(cli_main, "watch_command", lambda **kwargs: 0)
+    monkeypatch.setattr(cli_main, "check_command", check)
+
+    result = CliRunner().invoke(
+        cli,
+        ["watch", "--out", str(tmp_path / "empty"), "--policy", str(tmp_path / "p.json"),
+         "--", "true"],
+    )
+    assert result.exit_code == EXIT_ERROR
     assert len(check.calls) == 1
 
 

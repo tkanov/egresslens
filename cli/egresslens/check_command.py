@@ -42,6 +42,13 @@ VERDICT_EXIT_CODES = {
 # not breaking.
 SCHEMA_VERSION = 1
 
+# The names a capture writes, as this command expects to find them. Named here
+# because `main` needs the events name too, to tell "no capture happened" from
+# "a capture happened and there is a verdict to reach".
+EVENTS_FILENAME = "egress.jsonl"
+STRACE_FILENAME = "egress.strace"
+RUN_METADATA_FILENAME = "run.json"
+
 # Rows printed before the list is elided. The engine caps the list it returns at
 # MAX_UNEXPECTED (50), so the remainder disclosed against the exact
 # unexpected_count can be larger than the number of rows that were available.
@@ -112,7 +119,7 @@ def resolve_artifacts(
     an error, while a capture that simply has no egress.strace is ordinary and
     only means no passive DNS.
     """
-    resolved_events = events_path if events_path is not None else directory / "egress.jsonl"
+    resolved_events = events_path if events_path is not None else directory / EVENTS_FILENAME
 
     if strace_path is not None:
         if not strace_path.exists():
@@ -126,7 +133,7 @@ def resolve_artifacts(
     # -- enough to turn a domain rule into a PASS it never earned. A capture
     # writes both files into one directory, so this is the same path in the
     # ordinary case.
-    default_strace = resolved_events.parent / "egress.strace"
+    default_strace = resolved_events.parent / STRACE_FILENAME
     return resolved_events, default_strace if default_strace.exists() else None
 
 

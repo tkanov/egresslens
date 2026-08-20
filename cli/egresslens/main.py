@@ -6,7 +6,7 @@ from typing import Optional
 
 import click
 
-from egresslens.check_command import EXIT_PASS, check_command
+from egresslens.check_command import EVENTS_FILENAME, EXIT_PASS, check_command
 from egresslens.watch import watch_command
 from egresslens.run_app_command import run_app_command
 
@@ -248,8 +248,23 @@ def _gate(
     still recoverable -- run.json records the command's, and the printed verdict
     block states it -- with one residual ambiguity: a command that itself exits 3
     under a passing verdict looks like INCONCLUSIVE.
+
+    A capture that failed before writing a report is the exception, and it has to
+    be: there is no capture to judge, the command has already said what went
+    wrong, and running the gate anyway replaces its status with a 2 that reads as
+    "your allowlist is malformed". That is how `run-app`'s documented 90 for a
+    failed dependency install became unreachable in exactly the configuration
+    the README recommends for CI, and how a missing entry point became a 2.
+
+    Tested as "the capture failed and left no events file", not as "the exit code
+    was 90". The status alone is ambiguous -- a traced app may exit 90 itself,
+    and that run has a report and must be gated. A zero exit with no events file
+    still goes to the gate and errors there, so nothing can pass unjudged.
     """
     if policy_path is None:
+        return exit_code
+
+    if exit_code != 0 and not (output_dir / EVENTS_FILENAME).exists():
         return exit_code
 
     verdict_code = check_command(
