@@ -65,12 +65,19 @@ DOMAIN_ADVISORY_NOTE = (
     "process's own DNS traffic and could be forged by an evading subject. ip/CIDR "
     "rules are the hard gate."
 )
-BLIND_SPOT_NOTE = (
-    "This allowlist has domain rules, but not one destination carried an attributed "
-    "domain, so every domain rule was dead and the result says more about the "
-    "artifacts than about the app: no egress.strace was read, and the events carried "
-    "no domain/domain_source of their own. Capture egress.strace alongside "
-    "egress.jsonl, or pass --strace."
+NO_TRACE_BLIND_SPOT_NOTE = (
+    "This allowlist has domain rules, but no trace was read and the events carried no "
+    "domain/domain_source of their own, so nothing was named and every domain rule was "
+    "dead. That says more about the artifacts than about the app: capture "
+    "egress.strace alongside egress.jsonl, or point --strace at it."
+)
+UNNAMEABLE_DESTINATIONS_NOTE = (
+    "This allowlist has domain rules, but the trace named none of the observed "
+    "destinations, so every domain rule was dead. Passive DNS can only name an address "
+    "that appeared in a DNS answer -- which the resolver the queries went to never "
+    "does, and neither does anything reached without a lookup, such as a literal IP "
+    "address. Destinations like those need an ip/CIDR rule; no domain rule can ever "
+    "match them."
 )
 
 
@@ -79,6 +86,14 @@ def _reverse_dns_note(matches: int) -> str:
         f"{matches} destination name(s) came from live reverse DNS lookups rather than "
         "from the trace, so the same artifacts can yield a different verdict on a "
         "re-run. Drop --reverse-dns for a reproducible gate."
+    )
+
+
+def _ipv6_note(count: int) -> str:
+    return (
+        f"The capture counted {count} IPv6 connection(s) it could not record, so those "
+        "destinations were not judged at all: this verdict covers IPv4. A PASS says "
+        "nothing about where the app went over IPv6."
     )
 
 
@@ -126,6 +141,8 @@ class CheckResult:
     expected_via_ip: int
     expected_via_domain_only: int
     enrichment: dict
+    capture_path: Path
+    capture_counts: Optional[dict] = None
     notes: List[str] = field(default_factory=list)
 
 
@@ -183,6 +200,37 @@ def load_policy_file(path: Path) -> Policy:
         raise CheckInputError(f"invalid policy {path}: {exc}") from exc
 
 
+def read_capture_counts(path: Path) -> Optional[dict]:
+    """Read ``counts`` out of a capture's run.json, or None if it is not readable.
+
+    Non-fatal in every failure mode, deliberately: run.json describes the capture
+    rather than feeding the verdict, so a missing or corrupt one must not turn a
+    verdict into an error. What it carries is the capture's own record of what it
+    could *not* observe, and a gate that stays quieter about that than the command
+    which produced its inputs is worse than useless -- an app that egresses over
+    IPv6 to an unlisted host and makes one allowlisted IPv4 connection would
+    otherwise get a bare PASS.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, RecursionError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    counts = data.get("counts")
+    return counts if isinstance(counts, dict) else None
+
+
+def _counter(counts: Optional[dict], name: str) -> int:
+    """One counter from run.json, treating anything unexpected as absent."""
+    if not counts:
+        return 0
+    value = counts.get(name)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
 def read_strace(path: Path) -> str:
     """Read a trace as lossy UTF-8, as the upload path does.
 
@@ -211,6 +259,10 @@ def evaluate_capture(
     policy = load_policy_file(policy_path)
     events = load_events(resolved_events)
     strace_text = read_strace(resolved_strace) if resolved_strace is not None else None
+    # Beside the events, for the same reason the trace is: with --events pointing
+    # elsewhere, another capture's run.json must not describe these events.
+    capture_path = resolved_events.parent / RUN_METADATA_FILENAME
+    capture_counts = read_capture_counts(capture_path)
 
     enrichment = enrich_events(
         events,
@@ -258,26 +310,60 @@ def evaluate_capture(
         expected_via_ip=expected_via_ip,
         expected_via_domain_only=expected_via_domain_only,
         enrichment=enrichment_summary,
-        notes=build_notes(verdict, destinations, enrichment.reverse_matches),
+        capture_path=capture_path,
+        capture_counts=capture_counts,
+        notes=build_notes(
+            verdict,
+            destinations,
+            reverse_matches=enrichment.reverse_matches,
+            trace_was_read=resolved_strace is not None,
+            capture_counts=capture_counts,
+        ),
     )
 
 
-def build_notes(verdict: dict, destinations: List[dict], reverse_matches: int) -> List[str]:
+def build_notes(
+    verdict: dict,
+    destinations: List[dict],
+    *,
+    reverse_matches: int,
+    trace_was_read: bool,
+    capture_counts: Optional[dict],
+) -> List[str]:
     """Say what the verdict does not: what it rests on, and where it is blind."""
     notes = []
     if verdict["verdict"] == "inconclusive":
         notes.append(INCONCLUSIVE_NOTE)
     if verdict["has_domain_rules"]:
         notes.append(DOMAIN_ADVISORY_NOTE)
-        # Tested as an outcome rather than as "was there a trace file": an
-        # egress.jsonl can carry its own attribution, which is what
-        # event_domain_candidates exists for, so the question is whether any
-        # destination ended up named at all. Skipped when there is nothing to
-        # judge, because the inconclusive note already says so.
+        # Whether anything got named is the outcome that matters, not whether a
+        # trace file existed: an egress.jsonl can carry its own attribution, which
+        # is what event_domain_candidates exists for. Skipped when there is
+        # nothing to judge, because the inconclusive note already says so.
+        #
+        # But the *cause* has to be diagnosed rather than assumed. Blaming a
+        # missing trace when one was read and parsed sends the reader after a file
+        # they already have: `run-app ./sample_app --args "dns example.com"` reads
+        # its trace, finds the example.com A records in it, and still names
+        # nothing, because the only destination is the resolver those answers came
+        # from. No trace can ever name that address.
         if destinations and not any(dest["domains"] for dest in destinations):
-            notes.append(BLIND_SPOT_NOTE)
+            notes.append(
+                UNNAMEABLE_DESTINATIONS_NOTE if trace_was_read else NO_TRACE_BLIND_SPOT_NOTE
+            )
     if reverse_matches:
         notes.append(_reverse_dns_note(reverse_matches))
+
+    # From the capture's own record of what it could not observe. Only the IPv6
+    # counter earns a note: those destinations were reached and are not in the
+    # verdict, so a PASS is narrower than it looks. udp_probes_skipped is the
+    # opposite -- connects that transmitted nothing, so no destination was
+    # contacted -- and it is non-zero on almost every capture that resolves a
+    # name, so a note would train the reader to skip notes. It stays in
+    # --format json, where a consumer can ask for it.
+    ipv6_skipped = _counter(capture_counts, "ipv6_connects_skipped")
+    if ipv6_skipped:
+        notes.append(_ipv6_note(ipv6_skipped))
     return notes
 
 
@@ -345,6 +431,13 @@ def render_json(result: CheckResult) -> str:
             "strace": {
                 "path": str(result.strace_path) if result.strace_path is not None else None,
                 "present": result.strace_path is not None,
+            },
+            # run.json's counts verbatim, so a counter added by the capture side
+            # shows up here without this file having to learn its name.
+            "capture": {
+                "path": str(result.capture_path),
+                "present": result.capture_counts is not None,
+                "counts": result.capture_counts if result.capture_counts is not None else {},
             },
             "enrichment": result.enrichment,
             "notes": result.notes,

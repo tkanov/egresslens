@@ -430,16 +430,43 @@ def test_domain_rule_matches_attribution_carried_by_the_events(tmp_path):
     assert payload["strace"]["present"] is False
 
 
-def test_domain_rules_with_no_attributed_domains_warn_about_the_blind_spot(tmp_path):
+def test_domain_rules_with_no_trace_say_so_and_say_what_to_capture(tmp_path):
     out = tmp_path / "capture"
     write_events(out, [connect("93.184.216.34")])
     policy = write_policy(tmp_path, {"allow": ["example.com"]})
 
     result = invoke(out, policy)
+    flat = " ".join(result.output.split())
     assert result.exit_code == EXIT_FAIL
-    assert "not one destination carried an attributed domain" in " ".join(result.output.split())
-    assert "egress.strace" in result.output
-    assert "domain/domain_source" in result.output
+    assert "no trace was read" in flat
+    assert "domain/domain_source" in flat
+    assert "egress.strace" in flat
+
+
+def test_a_trace_that_named_nothing_is_not_reported_as_a_missing_trace(tmp_path):
+    """The cause has to be diagnosed, not assumed.
+
+    This is the project's own canonical first run: `run-app ./sample_app --args
+    "dns example.com"` reaches only the resolver, and passive DNS can never name
+    the address that answers the queries -- the trace is read, contains the
+    example.com A records, and still names no destination. Blaming a missing
+    trace sent the reader after a file they already had, and prescribed a remedy
+    that does nothing.
+    """
+    out = tmp_path / "capture"
+    write_events(out, [connect("192.168.65.7", 53, "udp")])
+    # A real answer for a name that is not the destination, exactly as a resolver
+    # capture looks: the answer is about 93.184.216.34, the traffic goes to :53.
+    write_strace(out, "example.com", [("example.com", "93.184.216.34")])
+    policy = write_policy(tmp_path, {"allow": ["example.com"]})
+
+    result = invoke(out, policy)
+    flat = " ".join(result.output.split())
+    assert result.exit_code == EXIT_FAIL
+    assert "the trace named none of the observed destinations" in flat
+    assert "need an ip/CIDR rule" in flat
+    assert "no trace was read" not in flat
+    assert "--strace" not in flat  # the inert remedy
 
 
 def test_no_reverse_dns_by_default(tmp_path):
@@ -493,6 +520,80 @@ def test_ip_rule_wins_the_split_over_a_domain_rule(tmp_path):
     payload = json.loads(result.output)
     assert payload["expected_via_ip"] == 1
     assert payload["expected_via_domain_only"] == 1
+
+
+# --- What the capture itself could not observe --------------------------------
+
+def write_run_json(directory: Path, **counts) -> Path:
+    path = directory / "run.json"
+    base = {
+        "total_events": 1,
+        "unique_dst_ips": 1,
+        "unique_dst_ip_ports": 1,
+        "ipv6_connects_skipped": 0,
+        "udp_probes_skipped": 0,
+    }
+    base.update(counts)
+    path.write_text(json.dumps({"exit_code": 0, "counts": base}), encoding="utf-8")
+    return path
+
+
+def test_a_pass_discloses_ipv6_egress_the_capture_could_not_record(tmp_path):
+    """The gate must not be quieter than the command that produced its inputs.
+
+    An app that egresses over IPv6 to an unlisted host and makes one allowlisted
+    IPv4 connection used to get a bare PASS with no notes, while the capture
+    command printed the IPv6 count and run.json recorded it in the same
+    directory.
+    """
+    out = tmp_path / "capture"
+    write_events(out, [connect("1.2.3.4")])
+    write_run_json(out, ipv6_connects_skipped=2)
+    policy = write_policy(tmp_path, {"allow": ["1.2.3.4"]})
+
+    result = invoke(out, policy)
+    flat = " ".join(result.output.split())
+    assert result.exit_code == EXIT_PASS
+    assert "2 IPv6 connection(s) it could not record" in flat
+    assert "covers IPv4" in flat
+
+
+def test_no_ipv6_note_when_the_capture_recorded_everything(tmp_path):
+    out = tmp_path / "capture"
+    write_events(out, [connect("1.2.3.4")])
+    write_run_json(out, ipv6_connects_skipped=0, udp_probes_skipped=4)
+    policy = write_policy(tmp_path, {"allow": ["1.2.3.4"]})
+
+    result = invoke(out, policy, "--format", "json")
+    payload = json.loads(result.output)
+    assert result.exit_code == EXIT_PASS
+    assert payload["notes"] == []
+    # udp_probes_skipped is reported but deliberately not a note: those connects
+    # transmitted nothing, so no destination was contacted, and they are non-zero
+    # on almost every capture that resolves a name.
+    assert payload["capture"]["counts"]["udp_probes_skipped"] == 4
+    assert payload["capture"]["present"] is True
+
+
+def test_run_metadata_is_never_required(tmp_path):
+    """Absent or corrupt run.json describes the capture, so it cannot fail a verdict."""
+    policy = write_policy(tmp_path, {"allow": ["1.2.3.4"]})
+
+    absent = tmp_path / "absent"
+    write_events(absent, [connect("1.2.3.4")])
+    result = invoke(absent, policy, "--format", "json")
+    assert result.exit_code == EXIT_PASS
+    assert json.loads(result.output)["capture"] == {
+        "path": str(absent / "run.json"),
+        "present": False,
+        "counts": {},
+    }
+
+    for content in ('not json at all', '[]', '{"counts": 7}', '{"counts": {"ipv6_connects_skipped": "two"}}'):
+        corrupt = tmp_path / f"corrupt{abs(hash(content))}"
+        write_events(corrupt, [connect("1.2.3.4")])
+        (corrupt / "run.json").write_text(content, encoding="utf-8")
+        assert invoke(corrupt, policy).exit_code == EXIT_PASS, content
 
 
 # --- Output format -----------------------------------------------------------
