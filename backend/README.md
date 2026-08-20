@@ -27,7 +27,7 @@ The API is then at `http://localhost:8000`, with interactive docs at `/docs`.
 |---|---|
 | `POST /api/reports/upload` | Create a report from uploaded artifacts |
 | `GET /api/reports/{id}` | Fetch a report |
-| `GET /api/reports/{id}/events` | List events; optional `?limit=` (1–1000) |
+| `GET /api/reports/{id}/events` | List events, optional `?limit=` (1–1000) |
 | `GET /api/reports/{id}/export.md` | Export the report as Markdown |
 | `GET /health` | Health check |
 
@@ -45,7 +45,7 @@ Multipart form, one required field and three optional ones:
 Each file is capped at `max_upload_mb` (default 50 MB) and rejected with HTTP 413
 if larger; a malformed policy is rejected with HTTP 400.
 
-`GET /events` returns `{report_id, total, returned, events}` — `total` is the
+`GET /events` returns `{report_id, total, returned, events}` – `total` is the
 stored event count, `returned` reflects `limit`.
 
 ## Egress policy
@@ -68,10 +68,10 @@ allowlist and the result lands in `summary.policy`:
 
 The verdict is **three-way**, not a boolean:
 
-- `pass` — every observed destination matched a rule.
-- `fail` — at least one did not. Raises a **high**-severity "Unexpected
+- `pass` – every observed destination matched a rule.
+- `fail` – at least one did not. Raises a **high**-severity "Unexpected
   destinations" flag.
-- `inconclusive` — an allowlist was uploaded but no destinations were observed,
+- `inconclusive` – an allowlist was uploaded but no destinations were observed,
   so nothing was checked. Raises a **medium**-severity "Egress policy not
   evaluated" flag. This case is deliberately not `pass`: a failed capture, the
   wrong file, and a genuinely quiet run are indistinguishable here, and calling
@@ -85,8 +85,8 @@ Two bounds worth knowing: an allowlist may hold at most 1000 rules (more is a
 400), and the stored `unexpected` list is truncated to 50 entries while
 `unexpected_count` stays exact.
 
-Rule syntax and the trust model — why `domain` rules are advisory and `ip`/CIDR
-rules are a hard gate — are in [docs/policy.md](../docs/policy.md).
+Rule syntax and the trust model – why `domain` rules are advisory and `ip`/CIDR
+rules are a hard gate – are in [docs/policy.md](../docs/policy.md).
 
 The engine itself lives in `egresslens.policy` and `egresslens.enrichment`;
 `app.policy` and `app.enrichment` re-export it and hold no logic. It moved there
@@ -113,7 +113,7 @@ multicast, unspecified, and reserved ranges are skipped. Malformed or truncated
 DNS payloads are ignored rather than failing the upload.
 
 Only `recvfrom` and `recvmsg` lines are scanned, so a resolver that reads answers
-with `recvmmsg` yields no passive DNS at all — those destinations fall through to
+with `recvmmsg` yields no passive DNS at all – those destinations fall through to
 reverse DNS or stay unresolved.
 
 Events gain `domain` and `domain_source`; top destinations also carry `domains`,
@@ -152,7 +152,7 @@ uploads:
 | `ENRICHMENT_REVERSE_DNS_TIMEOUT_SECONDS` | float > 0 | 0.5 |
 | `ENRICHMENT_REVERSE_DNS_MAX_IPS` | int ≥ 0 | 100 |
 | `MAX_UPLOAD_MB` | int > 0 | 50 |
-| `ALLOWED_ORIGINS` | comma-separated origins | — |
+| `ALLOWED_ORIGINS` | comma-separated origins | – |
 
 `ALLOWED_ORIGINS` extends the CORS allowlist, which already covers
 `localhost`/`127.0.0.1` on ports 5173 and 3000. Set it if you serve the UI from

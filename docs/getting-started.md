@@ -145,13 +145,13 @@ $ head -n 3 egresslens-output/egress.jsonl
 ## Step 7: Upload the JSONL in the UI
 
 Use the upload page to submit `egresslens-output/egress.jsonl`. That file is the
-only required one; the other three pickers each add something:
+only required one, the other three pickers each add something:
 
-- `egresslens-output/run.json` in the run metadata picker — command, image, exit code, timing
-- `egresslens-output/egress.strace` in the passive DNS trace picker — domains for public IPs
-- a `policy.json` allowlist in the egress allowlist picker — a pass/fail verdict (see Step 9)
+- `egresslens-output/run.json` in the run metadata picker – command, image, exit code, timing
+- `egresslens-output/egress.strace` in the passive DNS trace picker – domains for public IPs
+- a `policy.json` allowlist in the egress allowlist picker – a pass/fail verdict (see Step 9)
 
-For domains, the backend first uses passive UDP DNS A-record answers visible in `egress.strace`, then falls back to bounded reverse DNS for unresolved public IPv4 addresses. JSONL-only uploads remain valid; unresolved destinations simply show an empty domain value.
+For domains, the backend first uses passive UDP DNS A-record answers visible in `egress.strace`, then falls back to bounded reverse DNS for unresolved public IPv4 addresses. JSONL-only uploads remain valid, unresolved destinations simply show an empty domain value.
 
 
 ![Upload screen](images/ui-frontend.png)
@@ -180,7 +180,7 @@ supposed to reach into a `policy.json`:
 lines of the `egress.jsonl` you just captured: it is whatever resolves names
 inside the container, which is `192.168.65.7` on Docker Desktop and something
 else nearly everywhere else. That is also why it needs an `ip` rule rather than a
-domain rule -- the resolver is the address DNS answers come *from*, so no answer
+domain rule – the resolver is the address DNS answers come *from*, so no answer
 ever names it, and a `domain` rule can never match it. `crt.sh` is the one
 destination in the `all` run that a DNS answer does name.
 
@@ -207,9 +207,9 @@ Upload it in the egress allowlist picker alongside the same `egress.jsonl`. Ever
 observed destination is then checked against the list, and the report gains a
 verdict:
 
-- **PASS** — everything observed was on the list
-- **FAIL** — something was not, raising a high-severity "Unexpected destinations" flag
-- **INCONCLUSIVE** — no destinations were observed at all, so the list was never exercised
+- **PASS** – everything observed was on the list
+- **FAIL** – something was not, raising a high-severity "Unexpected destinations" flag
+- **INCONCLUSIVE** – no destinations were observed at all, so the list was never exercised
 
 INCONCLUSIVE is not a quiet pass: it means the capture gave the allowlist nothing
 to judge, which looks the same whether the run was genuinely silent or the
@@ -238,11 +238,11 @@ the `crt.sh` rule did nothing and the whole verdict rested on the `ip` rule.
 Rule syntax, and why `domain` rules are advisory while `ip`/CIDR rules are a hard
 gate, are covered in [docs/policy.md](policy.md).
 
-Two things to watch when writing a policy: `allow` is the only key honoured — a
+Two things to watch when writing a policy: `allow` is the only key honoured – a
 `deny` block written beside it is dropped without warning, so it will not do what
 it looks like it does, while a file containing *only* `deny` has no allowlist and
-is rejected outright — and a rule combining `domain` and `ip` is not an IP hard
-gate; write the `ip` rule separately.
+is rejected outright – and a rule combining `domain` and `ip` is not an IP hard
+gate, write the `ip` rule separately.
 
 ---
 
@@ -283,9 +283,9 @@ The current MVP captures **IPv4 (AF_INET) destinations only**.
 
 A destination is captured from either `connect()` or, when the socket is unconnected, from the `sendto`/`sendmsg`/`sendmmsg` call that names it. Both matter: `dnspython` resolves with `sendto()` on an unconnected socket and never calls `connect()`, as do statsd clients, syslog-over-UDP, NTP, and Python QUIC stacks. A send on a socket that was already `connect()`ed prints `msg_name=NULL` and is not re-reported, so there is no double counting.
 
-Only syscalls in strace's `network` class are traced (`-e trace=network`). Egress submitted by another mechanism — `io_uring`, for example — is not captured at all and cannot raise a policy FAIL.
+Only syscalls in strace's `network` class are traced (`-e trace=network`). Egress submitted by another mechanism – `io_uring`, for example – is not captured at all and cannot raise a policy FAIL.
 
-A UDP `connect()` on a socket that never carries a send or receive is excluded from the report and counted as `counts.udp_probes_skipped` in `run.json`. Such a call transmits no packet: on a datagram socket `connect()` only records a default peer. glibc's resolver performs one per candidate address to learn which source address the kernel would choose (RFC 3484/6724), so an app that merely resolves a hostname would otherwise report every address it considered as a destination it contacted. The exclusion is decided by whether the socket carried traffic, not by port number — the same probes appear against port 443 as against port 0, and a genuine `connect()` to port 0 is legal. Anything that sends or receives is kept.
+A UDP `connect()` on a socket that never carries a send or receive is excluded from the report and counted as `counts.udp_probes_skipped` in `run.json`. Such a call transmits no packet: on a datagram socket `connect()` only records a default peer. glibc's resolver performs one per candidate address to learn which source address the kernel would choose (RFC 3484/6724), so an app that merely resolves a hostname would otherwise report every address it considered as a destination it contacted. The exclusion is decided by whether the socket carried traffic, not by port number – the same probes appear against port 443 as against port 0, and a genuine `connect()` to port 0 is legal. Anything that sends or receives is kept.
 
 Two shapes are deliberately still reported, because `-e trace=network` cannot distinguish them from a probe: a connected UDP socket written with `write()`, and traffic sent through a `dup()` of the connected descriptor. Both count as egress here, which errs towards reporting.
 

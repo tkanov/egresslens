@@ -88,8 +88,8 @@ A successful demo shows:
 
 The recorded flow uploads the three captured artifacts and does not exercise the
 egress allowlist. To see a PASS/FAIL/INCONCLUSIVE verdict, upload a `policy.json`
-by hand in the egress allowlist picker — see
-[getting-started.md](getting-started.md) for a worked example — or get the same
+by hand in the egress allowlist picker – see
+[getting-started.md](getting-started.md) for a worked example – or get the same
 verdict without the UI at all with
 `egresslens check demo-output/ --policy policy.json`.
 
