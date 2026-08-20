@@ -218,6 +218,10 @@ A destination is captured from either `connect()` or, when the socket is unconne
 
 Only syscalls in strace's `network` class are traced (`-e trace=network`). Egress submitted by another mechanism — `io_uring`, for example — is not captured at all and cannot raise a policy FAIL.
 
+A UDP `connect()` on a socket that never carries a send or receive is excluded from the report and counted as `counts.udp_probes_skipped` in `run.json`. Such a call transmits no packet: on a datagram socket `connect()` only records a default peer. glibc's resolver performs one per candidate address to learn which source address the kernel would choose (RFC 3484/6724), so an app that merely resolves a hostname would otherwise report every address it considered as a destination it contacted. The exclusion is decided by whether the socket carried traffic, not by port number — the same probes appear against port 443 as against port 0, and a genuine `connect()` to port 0 is legal. Anything that sends or receives is kept.
+
+Two shapes are deliberately still reported, because `-e trace=network` cannot distinguish them from a probe: a connected UDP socket written with `write()`, and traffic sent through a `dup()` of the connected descriptor. Both count as egress here, which errs towards reporting.
+
 **Why**: IPv6 support requires:
 - Additional strace event parsing (AF_INET6 patterns)
 - Updated frontend/backend to display IPv6-specific formats (e.g., IPv6 address notation)
