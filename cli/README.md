@@ -40,6 +40,14 @@ egresslens run-app ./my_python_app --args "arg1 arg2"
 Finds the entry point (`__main__.py`, `main.py`, or `app.py`, in that order),
 installs `requirements.txt` if present, and runs it under trace.
 
+The install runs *before* `strace` starts, so pip's own resolution and downloads
+are not traced. Tracing them made PyPI and its CDN show up as destinations the
+app reached, which for `sample_app` was 84% of the captured events. pip's output
+goes to `pip_install.log`, not to `cmd_stdout`/`cmd_stderr`.
+
+A failed install exits `90`, a status reserved for it: the app never ran, so no
+trace is written and no report is produced. The reason is in `pip_install.log`.
+
 > **Known bug:** the `__main__.py` case does not work. The runner invokes
 > `python -m <app dir name>` while the working directory *is* that directory, so
 > the module is never on `sys.path` under that name and the run fails with
@@ -77,6 +85,7 @@ Written to the output directory:
 | `run.json` | Run ID, command, image, timing, exit code, event counts |
 | `cmd_stdout` | The traced command's stdout |
 | `cmd_stderr` | The traced command's stderr |
+| `pip_install.log` | `run-app` only, with a `requirements.txt`: the untraced install's output |
 
 IPv6 destinations are not captured. Those reached via `connect()` are counted in
 `run.json` under `counts.ipv6_connects_skipped`, so the number is visible even

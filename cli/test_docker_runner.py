@@ -17,6 +17,8 @@ import pytest
 from egresslens import docker_runner
 from egresslens.docker_runner import (
     DEFAULT_IMAGE,
+    PIP_LOG_NAME,
+    SETUP_FAILED_EXIT_CODE,
     STRACE_STRING_LIMIT,
     DockerRunner,
     run_python_app,
@@ -62,6 +64,19 @@ def inner_command(strace_cmd: list) -> list:
             break
         argv.append(token)
     return argv
+
+
+def container_script(argv: list) -> str:
+    """The shell script the container runs, from a `docker run ... <image> sh -c <script>`."""
+    cmd = argv[argv.index(DEFAULT_IMAGE) + 1:]
+    assert cmd[:2] == ["sh", "-c"]
+    return cmd[2]
+
+
+def split_at_strace(script: str) -> tuple:
+    """Split a container script into (what runs untraced first, the strace part)."""
+    start = script.index("strace -f")
+    return script[:start], script[start:]
 
 
 # --- strace invocation: the backend depends on these flags ---------------------
@@ -235,6 +250,176 @@ def test_requirements_are_installed_before_the_app_runs(monkeypatch, tmp_path):
     assert "--break-system-packages" in script
     assert "PYTHONPATH=/tmp/pypackages" in script
     assert "-r requirements.txt" in script
+
+
+def test_dependency_install_runs_outside_the_trace(monkeypatch, tmp_path):
+    """pip's own downloads must not be reported as the app's egress.
+
+    With strace on the outside, every run of an app with a requirements.txt
+    reported PyPI's CDN as a destination the app reached -- for sample_app that
+    was 84% of the events and 4 of the 5 unique destinations. So the install runs
+    first, untraced, and strace wraps only the app.
+    """
+    calls = fake_subprocess(monkeypatch)
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+
+    run_python_app(
+        app_path=app_dir,
+        entry_point="app.py",
+        app_args=["dns", "example.com"],
+        has_requirements=True,
+        image=DEFAULT_IMAGE,
+        strace_output_path=tmp_path / "egress.strace",
+    )
+
+    script = container_script(docker_run_argv(calls))
+    untraced, traced = split_at_strace(script)
+
+    assert "pip install" in untraced
+    assert "pip install" not in traced
+    assert inner_command(["sh", "-c", traced]) == ["python", "app.py", "dns", "example.com"]
+
+
+def test_pip_output_is_kept_out_of_the_app_capture_files(monkeypatch, tmp_path):
+    """cmd_stdout/cmd_stderr are the app's output; pip gets its own log.
+
+    pip used to share those files, so its noise was indistinguishable from
+    whatever the app printed.
+    """
+    calls = fake_subprocess(monkeypatch)
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+
+    run_python_app(
+        app_path=app_dir,
+        entry_point="app.py",
+        app_args=[],
+        has_requirements=True,
+        image=DEFAULT_IMAGE,
+        strace_output_path=tmp_path / "egress.strace",
+    )
+
+    untraced, traced = split_at_strace(container_script(docker_run_argv(calls)))
+    assert f"/output/{PIP_LOG_NAME}" in untraced
+    assert "/output/cmd_stdout" not in untraced
+    assert "/output/cmd_stderr" not in untraced
+    assert "/output/cmd_stdout" in traced
+    assert "/output/cmd_stderr" in traced
+
+
+def test_an_app_without_requirements_is_traced_from_the_first_syscall(monkeypatch, tmp_path):
+    """No install means nothing to exclude, so the command is what it always was."""
+    calls = fake_subprocess(monkeypatch)
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+
+    run_python_app(
+        app_path=app_dir,
+        entry_point="app.py",
+        app_args=["dns", "example.com"],
+        has_requirements=False,
+        image=DEFAULT_IMAGE,
+        strace_output_path=tmp_path / "egress.strace",
+    )
+
+    script = container_script(docker_run_argv(calls))
+    assert script.startswith("strace -f -ttt")
+    assert "pip" not in script
+
+
+def test_watch_style_invocation_is_unchanged():
+    """`watch` installs nothing, so excluding the install must not touch it.
+
+    Pinned as the literal script rather than as substrings, because the whole
+    point is that these bytes did not move.
+    """
+    _, cmd = subprocess_runner()._build_strace_cmd(["curl", "https://example.com"])
+    assert cmd == [
+        "sh",
+        "-c",
+        f"strace -f -ttt -e trace=network -s {STRACE_STRING_LIMIT} "
+        "-o /output/egress.strace -- sh -c 'curl https://example.com "
+        "> /output/cmd_stdout 2> /output/cmd_stderr' && sync",
+    ]
+
+
+def test_app_args_survive_both_levels_of_sh(monkeypatch, tmp_path):
+    """The install step adds a shell level, so arguments are quoted twice over."""
+    calls = fake_subprocess(monkeypatch)
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+    nasty = ["--name", "two words", "semi;colon", "$(whoami)", "quo'te", "back\\slash"]
+
+    run_python_app(
+        app_path=app_dir,
+        entry_point="app.py",
+        app_args=nasty,
+        has_requirements=True,
+        image=DEFAULT_IMAGE,
+        strace_output_path=tmp_path / "egress.strace",
+    )
+
+    _, traced = split_at_strace(container_script(docker_run_argv(calls)))
+    assert inner_command(["sh", "-c", traced]) == ["python", "app.py"] + nasty
+
+
+# --- a failed install is not a quiet capture -----------------------------------
+
+def test_a_failed_setup_step_never_reaches_strace():
+    """Real sh, not a substring check: the guard has to short-circuit.
+
+    Runs the built script with a setup step that fails. strace is not installed
+    on the host, so reaching it would show up as a 127 instead.
+    """
+    _, cmd = subprocess_runner()._build_strace_cmd(["true"], setup_command="false")
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert result.returncode == SETUP_FAILED_EXIT_CODE
+
+
+def test_a_failed_install_reports_the_failure_instead_of_an_empty_capture(monkeypatch, tmp_path):
+    """No strace file: an empty one would read as "the app made no connections"."""
+    fake_subprocess(monkeypatch, exit_code=str(SETUP_FAILED_EXIT_CODE))
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+    strace_path = tmp_path / "out" / "egress.strace"
+
+    exit_code, error = run_python_app(
+        app_path=app_dir,
+        entry_point="app.py",
+        app_args=[],
+        has_requirements=True,
+        image=DEFAULT_IMAGE,
+        strace_output_path=strace_path,
+    )
+
+    assert exit_code == SETUP_FAILED_EXIT_CODE
+    assert error is not None
+    assert "requirements.txt" in error
+    assert PIP_LOG_NAME in error
+    assert not strace_path.exists()
+
+
+def test_the_reserved_status_only_means_install_failure_when_there_was_an_install(
+    monkeypatch, tmp_path
+):
+    """An app that happens to exit 90 on its own was still traced."""
+    fake_subprocess(monkeypatch, exit_code=str(SETUP_FAILED_EXIT_CODE))
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+    strace_path = tmp_path / "out" / "egress.strace"
+
+    exit_code, error = run_python_app(
+        app_path=app_dir,
+        entry_point="app.py",
+        app_args=[],
+        has_requirements=False,
+        image=DEFAULT_IMAGE,
+        strace_output_path=strace_path,
+    )
+
+    assert (exit_code, error) == (SETUP_FAILED_EXIT_CODE, None)
+    assert strace_path.exists()
 
 
 @pytest.mark.xfail(

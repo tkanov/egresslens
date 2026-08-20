@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
-from egresslens.docker_runner import run_python_app
+from egresslens.docker_runner import SETUP_FAILED_EXIT_CODE, run_python_app
 from egresslens.metadata import count_events_from_jsonl, generate_metadata, write_metadata
 from egresslens.run_app import validate_app_directory, AppValidationError
 from egresslens.strace_parser import parse_to_jsonl
@@ -57,6 +57,15 @@ def run_app_command(
         image=image,
         strace_output_path=strace_path,
     )
+    # A failed dependency install means the app never started, so there is no
+    # capture to report on. Writing the usual zero-event report here would look
+    # exactly like a run that made no network calls, which is the one thing a
+    # report must never claim by accident.
+    if app_meta["has_requirements"] and exit_code == SETUP_FAILED_EXIT_CODE:
+        print(f"Error: {error}", file=sys.stderr)
+        print("No report was written.", file=sys.stderr)
+        return exit_code
+
     if error:
         print(f"Warning: {error}", file=sys.stderr)
 
@@ -111,6 +120,7 @@ def run_app_command(
     if ipv6_connects_skipped:
         print(f"  Note: {ipv6_connects_skipped} IPv6 connection(s) not captured (IPv4 only)")
     if app_meta["has_requirements"]:
-        print("  Dependencies: Installed from requirements.txt")
+        print("  Dependencies: Installed from requirements.txt before tracing started")
+        print("                (pip's own egress is not in this report; output in pip_install.log)")
 
     return exit_code

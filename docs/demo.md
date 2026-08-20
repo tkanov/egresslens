@@ -37,8 +37,9 @@ It writes to `demo-output/`. The demo uploads three of the files it finds there:
 - `run.json`
 - `egress.strace`
 
-The traced app's own `cmd_stdout` and `cmd_stderr` land beside them, unused by the
-demo.
+The traced app's own `cmd_stdout` and `cmd_stderr` land beside them, as does
+`pip_install.log` from the untraced dependency install. The demo uses none of the
+three.
 
 Use `scripts/demo_capture.sh --rebuild` to force a Docker image rebuild. Override the demo domain with `DOMAIN=python.org scripts/demo_capture.sh`.
 

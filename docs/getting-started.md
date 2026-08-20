@@ -64,19 +64,24 @@ egresslens run-app ./sample_app --args "dns example.com"
 Example:
 
 ```
- $ egresslens run-app ./sample_app --args "all python.org"
+ $ egresslens run-app ./sample_app --args "all example.com"
 
 ✓ Run complete (exit code: 0)
-  Run ID: 2e79c74f-d012-4028-b5a6-0ae3630df627
+  Run ID: 3af979a5-e907-411f-bff2-ba6dbc3f6959
   Output: /workspaces/egresslens/egresslens-output
-  Events: 14 network events captured
-  Unique destinations: 6 IPs, 6 IP:port pairs
-  Dependencies: Installed from requirements.txt
+  Events: 5 network events captured
+  Unique destinations: 2 IPs, 2 IP:port pairs
+  Dependencies: Installed from requirements.txt before tracing started
+                (pip's own egress is not in this report; output in pip_install.log)
 
 ```
 
 
 Note: here we're using the sample app included in this repo.
+
+The `requirements.txt` install finishes before `strace` starts, so PyPI and its
+CDN are not in the capture. Otherwise every run of an app with dependencies
+would report pip's downloads as the app's own egress.
 
 
 ## Step 6: Review the generated files
@@ -91,10 +96,10 @@ The run creates `egresslens-output/` with:
 Sample:
 
 ```json
-{"ts": 1770477764.27391, "pid": 12, "event": "connect", "family": "inet", "proto": "tcp", "dst_ip": "192.168.1.1", "dst_port": 53, "result": "ok", "errno": null}
-{"ts": 1770477764.279734, "pid": 12, "event": "connect", "family": "inet", "proto": "tcp", "dst_ip": "151.101.128.223", "dst_port": 443, "result": "ok", "errno": null}
-{"ts": 1770477764.280498, "pid": 12, "event": "connect", "family": "inet", "proto": "tcp", "dst_ip": "151.101.192.223", "dst_port": 443, "result": "ok", "errno": null}
-{"ts": 1770477764.28121, "pid": 12, "event": "connect", "family": "inet", "proto": "tcp", "dst_ip": "151.101.0.223", "dst_port": 443, "result": "ok", "errno": null}
+{"ts": 1787221162.100912, "pid": 14, "event": "sendto", "family": "inet", "proto": "udp", "dst_ip": "192.168.65.7", "dst_port": 53, "result": "ok", "errno": null}
+{"ts": 1787221162.104651, "pid": 14, "event": "sendto", "family": "inet", "proto": "udp", "dst_ip": "192.168.65.7", "dst_port": 53, "result": "ok", "errno": null}
+{"ts": 1787221162.105824, "pid": 14, "event": "sendto", "family": "inet", "proto": "udp", "dst_ip": "192.168.65.7", "dst_port": 53, "result": "ok", "errno": null}
+{"ts": 1787221162.162485, "pid": 14, "event": "connect", "family": "inet", "proto": "tcp", "dst_ip": "91.199.212.73", "dst_port": 443, "result": "error", "errno": "EINPROGRESS"}
 ```
 
 `event` records which syscall named the destination: `connect`, or `sendto` /
@@ -107,28 +112,29 @@ Sample:
 Sample:
 
 ```log
-12    1770477764.115770 connect(3, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("192.168.1.1")}, 16) = 0
-12    1770477764.116208 sendmmsg(3, [{msg_hdr={msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="N\247\1\0\0\1\0\0\0\0\0\0\4pypi\3org\0\0\1\0\1", iov_len=26}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, msg_len=26}, {msg_hdr={msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="k\246\1\0\0\1\0\0\0\0\0\0\4pypi\3org\0\0\34\0\1", iov_len=26}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, msg_len=26}], 2, MSG_NOSIGNAL) = 2
-12    1770477764.116825 recvfrom(3, "k\246\201\200\0\1\0\0\0\0\0\0\4pypi\3org\0\0\34\0\1", 2048, 0, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("192.168.1.1")}, [28 => 16]) = 26
-12    1770477764.117768 recvfrom(3, "N\247\201\200\0\1\0\4\0\0\0\0\4pypi\3org\0\0\1\0\1\4pypi\3org\0\0\1\0\1\0\0\0\0\0\4\227e\0\337\4pypi\3org\0\0\1\0\1\0\0\0\0\0\4\227e\300\337\4pypi\3org\0\0\1\0\1\0\0\0\0\0\4\227e@\337\4pypi\3org\0\0\1\0\1\0\0\0\0\0\4\227e\200\337", 65536, 0, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("192.168.1.1")}, [28 => 16]) = 122
-12    1770477764.118570 socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3
-12    1770477764.118818 bind(3, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 0
-12    1770477764.120403 getsockname(3, {sa_family=AF_NETLINK, nl_pid=12, nl_groups=00000000}, [12]) = 0
+14    1787221162.111354 connect(3, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("192.168.65.7")}, 16) = 0
+14    1787221162.111505 sendmmsg(3, [{msg_hdr={msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\5%\1\0\0\1\0\0\0\0\0\0\3crt\2sh\0\0\1\0\1", iov_len=24}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, msg_len=24}, {msg_hdr={msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\n$\1\0\0\1\0\0\0\0\0\0\3crt\2sh\0\0\34\0\1", iov_len=24}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, msg_len=24}], 2, MSG_NOSIGNAL) = 2
+14    1787221162.112529 recvfrom(3, "\n$\201\200\0\1\0\0\0\0\0\0\3crt\2sh\0\0\34\0\1", 2048, 0, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("192.168.65.7")}, [28 => 16]) = 24
+14    1787221162.161731 recvfrom(3, "\5%\201\200\0\1\0\1\0\0\0\0\3crt\2sh\0\0\1\0\1\3crt\2sh\0\0\1\0\1\0\0\10\20\0\4[\307\324I", 65536, 0, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("192.168.65.7")}, [28 => 16]) = 46
+14    1787221162.162083 socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC, IPPROTO_TCP) = 3
+14    1787221162.162485 connect(3, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("91.199.212.73")}, 16) = -1 EINPROGRESS (Operation now in progress)
 ```
 
 
 - `run.json` - run metadata
 - `cmd_stdout` - app stdout
 - `cmd_stderr` - app stderr
+- `pip_install.log` - the untraced dependency install's output, kept out of
+  `cmd_stdout`/`cmd_stderr` so those hold only what the app itself printed
 
 
 #### Preview a few events:
 
 ```bash
-$ head -n 5 egresslens-output/egress.jsonl
-{"ts": 1770477764.11577, "pid": 12, "event": "connect", "family": "inet", "proto": "tcp", "dst_ip": "192.168.5.1", "dst_port": 53, "result": "ok", "errno": null}
-{"ts": 1770477764.122074, "pid": 12, "event": "connect", "family": "inet", "proto": "tcp", "dst_ip": "151.101.0.223", "dst_port": 443, "result": "ok", "errno": null}
-{"ts": 1770477764.122886, "pid": 12, "event": "connect", "family": "inet", "proto": "tcp", "dst_ip": "151.101.192.223", "dst_port": 443, "result": "ok", "errno": null}
+$ head -n 3 egresslens-output/egress.jsonl
+{"ts": 1787221162.100912, "pid": 14, "event": "sendto", "family": "inet", "proto": "udp", "dst_ip": "192.168.65.7", "dst_port": 53, "result": "ok", "errno": null}
+{"ts": 1787221162.104651, "pid": 14, "event": "sendto", "family": "inet", "proto": "udp", "dst_ip": "192.168.65.7", "dst_port": 53, "result": "ok", "errno": null}
+{"ts": 1787221162.105824, "pid": 14, "event": "sendto", "family": "inet", "proto": "udp", "dst_ip": "192.168.65.7", "dst_port": 53, "result": "ok", "errno": null}
 ```
 
 
