@@ -67,14 +67,62 @@ Everything after `--` is the command. It runs inside the tracing image, so the
 binaries and libraries it needs must already be in that image — `watch` does not
 install anything.
 
+### `check` — judge a capture against an allowlist
+
+```bash
+egresslens check egresslens-output/ --policy policy.json
+```
+
+Reads the artifacts a capture already wrote and returns the verdict as an exit
+code. No Docker, no backend, and no network unless you opt into reverse DNS.
+`run-app` and `watch` accept `--policy` too, which runs the same check on the
+capture they just took.
+
+Domains come from the DNS answers in `egress.strace` (read automatically when it
+sits beside the events file) and from any `domain`/`domain_source` fields the
+events carry.
+Live reverse DNS is off by default: it needs egress from wherever the gate runs
+and PTR records change, so the same artifacts could pass one run and fail the
+next. `--reverse-dns` opts in.
+
+The output names how much of a PASS rests on a hard `ip`/CIDR rule and how much
+on a domain rule, since a domain is attributed from the traced process's own DNS
+traffic and evading code could forge it. `--format json` puts the whole verdict
+on stdout and nothing else, unexpected destinations included.
+
+#### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | PASS |
+| `1` | FAIL — at least one destination was off the allowlist |
+| `2` | Error — missing or unreadable artifacts, or a malformed allowlist |
+| `3` | INCONCLUSIVE — an allowlist was supplied and nothing was observed |
+
+`2` is never `1`: a policy that could not be read must not be reported as a
+policy that was violated. `3` is not a pass either — see
+[docs/policy.md](../docs/policy.md#verdicts).
+
+With `--policy` on `run-app` or `watch`, a non-pass verdict becomes the exit code
+and a passing one leaves the traced command's own code alone. Without `--policy`
+nothing changes.
+
 ### Options
 
 | Option | Commands | Description |
 |---|---|---|
-| `--out <path>` | both | Where to write output (default `egresslens-output/`) |
-| `--image <name>` | both | Tracing image to use (default `egresslens/base:latest`) |
+| `--out <path>` | `run-app`, `watch` | Where to write output (default `egresslens-output/`) |
+| `--image <name>` | `run-app`, `watch` | Tracing image to use (default `egresslens/base:latest`) |
 | `--args "<args>"` | `run-app` | Arguments passed to the traced app |
+| `--policy <path>` | all three | Allowlist to judge the capture against; required by `check` |
+| `--reverse-dns` | all three | Allow live reverse DNS for unnamed public IPs (off by default) |
+| `--events <path>` | `check` | Events file (default `<dir>/egress.jsonl`) |
+| `--strace <path>` | `check` | Trace to read passive DNS from (default: the `egress.strace` beside the events file, if present) |
+| `--format text\|json` | `check` | Output format (default `text`) |
 | `--version` | — | Print the version |
+
+`check` also takes `--reverse-dns-timeout` (default `0.5`) and
+`--reverse-dns-max-ips` (default `100`), matching the backend's bounds.
 
 ## Output
 
@@ -126,6 +174,20 @@ exit_code = watch_command(
 )
 ```
 
+The verdict is a separate call, returning the exit code documented above:
+
+```python
+from pathlib import Path
+from egresslens.check_command import EXIT_PASS, check_command
+
+verdict = check_command(
+    directory=Path("egresslens-output"),
+    policy_path=Path("policy.json"),
+)
+if verdict != EXIT_PASS:
+    ...
+```
+
 ## Tests
 
 pytest is not a declared dependency, so install it alongside the package:
@@ -141,4 +203,5 @@ locally installed `strace` and skips cleanly if `strace` is missing.
 ## Requirements
 
 - Python 3.9+
-- Docker — required, not optional; there is no host-only mode
+- Docker — required for `run-app` and `watch`, not optional; there is no
+  host-only mode. `check` needs neither Docker nor the backend: it reads files.

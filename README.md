@@ -28,7 +28,9 @@ docker build -t egresslens/base:latest .
 egresslens run-app ./sample_app --args "dns example.com"
 ```
 
-Output lands in `egresslens-output/`.
+Output lands in `egresslens-output/`. With an allowlist to hand,
+`egresslens check egresslens-output/ --policy policy.json` turns that capture
+into a pass/fail exit code (see [Egress Policy](#egress-policy)).
 
 ## View A Report
 
@@ -66,6 +68,24 @@ Before trusting a verdict:
 - Do not read "not FAIL" as PASS. INCONCLUSIVE means the capture gave the allowlist nothing to judge, and a failed capture looks identical to a genuinely quiet run.
 - A PASS covers only what was captured (see [Limits](#limits)) and is independent of the other flags, so it can appear next to an "Unusual ports" flag.
 
+### As A CI Gate
+
+`egresslens check` computes the same verdict from a capture directory and returns it as an exit code. It needs neither Docker nor the backend, only the files a capture wrote.
+
+```bash
+egresslens check egresslens-output/ --policy policy.json
+egresslens run-app ./my_app --policy policy.json      # capture, then judge
+```
+
+| Code | Meaning |
+|---|---|
+| `0` | PASS |
+| `1` | FAIL, at least one destination was off the allowlist |
+| `2` | Error: missing or unreadable artifacts, or a malformed allowlist |
+| `3` | INCONCLUSIVE, nothing was observed |
+
+`2` is deliberately not `1`: a broken allowlist must never be reported as a violated one. Reverse DNS is off by default here, because a gate that depends on live DNS is not reproducible. `--format json` puts the whole verdict on stdout for a job that wants to annotate a PR.
+
 Rule syntax, matching semantics, and known gotchas: [docs/policy.md](docs/policy.md).
 
 ## CLI
@@ -85,7 +105,7 @@ More detail: [cli/README.md](cli/README.md).
 
 ## Repo Map
 
-- `cli/`: capture network activity, write trace artifacts
+- `cli/`: capture network activity, write trace artifacts, judge them with `egresslens check`
 - `backend/`: FastAPI upload, aggregation, enrichment, policy, and export API
 - `frontend/`: React UI for uploads and reports
 - `sample_app/`: small app for predictable demo traffic

@@ -88,6 +88,13 @@ Two bounds worth knowing: an allowlist may hold at most 1000 rules (more is a
 Rule syntax and the trust model — why `domain` rules are advisory and `ip`/CIDR
 rules are a hard gate — are in [docs/policy.md](../docs/policy.md).
 
+The engine itself lives in `egresslens.policy` and `egresslens.enrichment`;
+`app.policy` and `app.enrichment` re-export it and hold no logic. It moved there
+so `egresslens check` can compute the same verdict from capture artifacts as a CI
+gate, without a server. One consequence worth knowing: reverse DNS defaults on
+here and off there, so the two agree on a verdict only for identical artifacts
+under identical enrichment settings.
+
 > **Caveat:** unknown *top-level* keys in a policy file are currently ignored
 > without warning, so a `deny` list written by mistake is silently dropped and
 > the run can report `pass`. Unknown keys *inside* a rule object are rejected.

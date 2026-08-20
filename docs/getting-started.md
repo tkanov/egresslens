@@ -189,6 +189,18 @@ INCONCLUSIVE is not a quiet pass: it means the capture gave the allowlist nothin
 to judge, which looks the same whether the run was genuinely silent or the
 capture failed.
 
+Or skip the UI: `egresslens check` computes the same verdict from the output
+directory and returns it as an exit code, which is what a CI job wants.
+
+```bash
+egresslens check egresslens-output/ --policy policy.json
+echo $?    # 0 PASS, 1 FAIL, 2 error, 3 INCONCLUSIVE
+```
+
+`2` covers a malformed allowlist or missing artifacts, so it is never confused
+with a FAIL. Reverse DNS is off there by default, unlike on upload, to keep the
+same artifacts giving the same answer on every run.
+
 Rule syntax, and why `domain` rules are advisory while `ip`/CIDR rules are a hard
 gate, are covered in [docs/policy.md](policy.md).
 
@@ -203,9 +215,9 @@ gate; write the `ip` rule separately.
 
 ### Domain enrichment scope
 
-Domain enrichment is backend-only. The CLI still writes the same `egress.jsonl` event format, and enrichment is applied only when a report is uploaded. Passive DNS currently parses UDP DNS A-record responses read via `recvfrom` or `recvmsg` in `egress.strace`; DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, IPv6 enrichment, and answers received via `recvmmsg` are outside the current scope.
+Domain enrichment runs on upload and in `egresslens check`, which share one engine; the CLI's capture step still writes the plain `egress.jsonl` event format either way. The two differ in one default: reverse DNS is on for an upload and off for `check`, so that a gate does not depend on live lookups. Passive DNS currently parses UDP DNS A-record responses read via `recvfrom` or `recvmsg` in `egress.strace`; DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, IPv6 enrichment, and answers received via `recvmmsg` are outside the current scope.
 
-Reverse DNS fallback is enabled by default but bounded by configuration: `ENRICHMENT_REVERSE_DNS_TIMEOUT_SECONDS` defaults to `0.5`, and `ENRICHMENT_REVERSE_DNS_MAX_IPS` defaults to `100`. It skips private, loopback, link-local, multicast, unspecified, and reserved ranges.
+Reverse DNS fallback is enabled by default on upload but bounded by configuration: `ENRICHMENT_REVERSE_DNS_TIMEOUT_SECONDS` defaults to `0.5`, and `ENRICHMENT_REVERSE_DNS_MAX_IPS` defaults to `100`. `egresslens check` takes the same bounds as `--reverse-dns-timeout` and `--reverse-dns-max-ips`, but only looks anything up with `--reverse-dns`. Either way it skips private, loopback, link-local, multicast, unspecified, and reserved ranges.
 
 ### IPv4 only
 
