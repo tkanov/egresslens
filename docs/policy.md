@@ -2,7 +2,7 @@
 
 An egress policy is an allowlist of the destinations an app is expected to reach.
 Upload one alongside a report and every observed destination is checked against
-it; anything that does not match is reported as unexpected. This page is the full
+it, anything that does not match is reported as unexpected. This page is the full
 reference. The [main README](../README.md#egress-policy) has the short version.
 
 ## Verdicts
@@ -53,7 +53,7 @@ tracing starts, so PyPI and its CDN are not observed and need no rules.
   subdomains only (`*.github.com` matches `api.github.com`, not the apex or
   `notgithub.com`).
 - An **ip** is a single address or a CIDR range.
-- An object rule may add a **port**; every field it declares must match.
+- An object rule may add a **port**, every field it declares must match.
 
 `allow` is the only key read. There is no deny list, and an allowlist holds at
 most 1000 rules. Unknown keys *inside* a rule object are rejected, but unknown
@@ -103,7 +103,7 @@ Where the capture counted what it could not record, `egresslens check` reads
 `run.json` from the capture directory and says so: a PASS alongside
 `counts.ipv6_connects_skipped` is a PASS over the IPv4 half of the traffic. The
 UI reports that same counter as "IPv6 not captured" in its Run details panel.
-`run.json` is optional here -- a missing or unreadable one is never an error,
+`run.json` is optional here – a missing or unreadable one is never an error,
 since it describes the capture rather than feeding the verdict.
 
 ## Evaluating a policy locally
@@ -163,9 +163,9 @@ Three qualifications, all of them things you can hit:
   `result` (the engine never reads them), and one missing `proto` (it selects a
   displayed label and is never matched against a rule). Files the UI rejects with
   a 400 can therefore still be graded here.
-- **Everything else is the same file set.** Values the upload path coerces --
+- **Everything else is the same file set.** Values the upload path coerces –
   a numeric string or an integral float for `dst_port`, a bool, a port outside
-  1..65535, an empty `dst_ip` -- are accepted here too and judged identically.
+  1..65535, an empty `dst_ip` – are accepted here too and judged identically.
   Refusing them would have been a worse divergence than accepting them: a real
   FAIL would surface as an exit-2 error naming a field instead of a verdict
   naming a destination. `backend/test_engine_shim.py` compares the two readers
@@ -179,7 +179,7 @@ matched by a combined `{"domain": ..., "ip": ...}` rule counts as domain-only,
 which is the same point made above: such a rule is not an IP hard gate.
 
 If an allowlist has `domain` rules and *no* destination ended up with a domain
-attributed, every domain rule in it was dead, and `check` says so explicitly --
+attributed, every domain rule in it was dead, and `check` says so explicitly –
 without being told, that is indistinguishable from a broken tool. It distinguishes
 the two causes, because they need different fixes:
 
@@ -188,13 +188,13 @@ the two causes, because they need different fixes:
 - **A trace was read and named none of the observed destinations.** Passive DNS
   can only name an address that appeared in a DNS *answer*, so it can never name
   the resolver the queries went to, nor anything reached without a lookup, such
-  as a literal IP address. Those destinations need an `ip`/CIDR rule; no domain
+  as a literal IP address. Those destinations need an `ip`/CIDR rule, no domain
   rule will ever match them. `run-app ./sample_app --args "dns example.com"` is
   exactly this case, which is worth knowing before you write your first policy.
 
 The note is independent of the verdict, so read it as "these rules did nothing",
 not as "everything failed". A domain-only allowlist does FAIL every destination
-here; a mixed one can still PASS on its `ip` rules with the note attached.
+here, a mixed one can still PASS on its `ip` rules with the note attached.
 
 ### Machine-readable output
 
@@ -203,15 +203,15 @@ verdict dict verbatim, the unexpected-destination list (truncated at 50, as on
 upload, while `unexpected_count` stays exact), enrichment counters, the notes the
 text output prints, and a `capture` block holding `run.json`'s counts as they
 were written. That block is the only place `udp_probes_skipped` is reported.
-`schema_version` is `1`; a new key is not a breaking change.
+`schema_version` is `1`, a new key is not a breaking change.
 
-On an input error nothing is written to stdout at all -- not an error object --
+On an input error nothing is written to stdout at all – not an error object –
 and the exit code is `2`. A consumer piping to `jq` sees empty input, which is
 the intended shape: there is no verdict to report.
 
 SARIF is deliberately not emitted. SARIF results are anchored to a
 `physicalLocation`, and an egress destination has no file or line, so the output
-would be results with empty locations plus custom properties — poorly rendered by
+would be results with empty locations plus custom properties – poorly rendered by
 GitHub code scanning and rejected outright by some consumers. It stays a pure
 serializer over the same dict if a concrete consumer turns up.
 
