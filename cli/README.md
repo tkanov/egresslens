@@ -93,6 +93,17 @@ IPv6 destinations are not captured. Those reached via `connect()` are counted in
 `run.json` under `counts.ipv6_connects_skipped`, so the number is visible even
 though the destinations are not.
 
+A UDP `connect()` with no send on the same socket is excluded, and counted under
+`counts.udp_probes_skipped`. `connect()` on a datagram socket only sets a default
+peer; it transmits nothing. glibc's resolver does one per candidate address to
+learn which source address the kernel would pick (RFC 6724), so reporting them
+would list destinations the process never contacted — for an app calling
+`socket.gethostbyname` that was two thirds of its events. The test is
+behavioural, not a port filter: a `connect()` followed by any send or receive on
+that socket is real egress and is kept, including DNS over a connected socket. A
+*failed* UDP `connect()` is also kept, since setting a peer is a local operation
+and a refusal there is egress the app genuinely attempted.
+
 ## Docker image
 
 The default image is `egresslens/base:latest`, built by `./docker-build.sh` (or

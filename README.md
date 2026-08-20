@@ -14,6 +14,7 @@ EgressLens runs an app under `strace`, captures IPv4 network syscalls, and write
 - `egress.strace`: raw trace output
 - `run.json`: command, image, timing, exit code, event counts
 - `cmd_stdout` and `cmd_stderr`: whatever the traced app printed
+- `pip_install.log`: `run-app` only, when the app has a `requirements.txt`
 
 Upload those to the UI for an aggregated report, with destinations named from DNS answers in the trace and bounded reverse DNS for the rest. Add an allowlist and the report gains a PASS/FAIL/INCONCLUSIVE verdict (see [Egress Policy](#egress-policy)).
 
@@ -101,6 +102,7 @@ Tracing needs `--cap-add SYS_PTRACE` and `--security-opt seccomp=unconfined`, wh
 - IPv4 only. IPv6 destinations are not captured; those reached via `connect()` are at least counted, as `ipv6_connects_skipped`.
 - Only strace's `network` syscall class is traced, so egress submitted another way (`io_uring`, for example) is invisible and cannot raise a policy FAIL.
 - Destinations are captured from `connect()` and from `sendto`/`sendmsg`/`sendmmsg` on unconnected sockets, so datagram egress that never calls `connect()` is still reported.
+- A UDP `connect()` that never sends is not egress and is not reported. `connect()` on a datagram socket transmits nothing, and glibc's resolver does one per candidate address to pick a source address, so counting them would name destinations the process never contacted. They are counted as `udp_probes_skipped` in `run.json` rather than dropped silently. Two shapes stay conservative and are still reported: a connected UDP socket written with `write()`, and traffic through a `dup()` of the connected socket, neither of which `-e trace=network` records.
 - Domain enrichment reads UDP DNS A-record answers only. DNS-over-HTTPS, DNS-over-TLS, TCP DNS, cached DNS, AAAA records, and `recvmmsg` are out of scope. Reverse DNS fallback skips private ranges and is bounded by backend configuration.
 
 Full detail: [docs/getting-started.md#limitations](docs/getting-started.md#limitations).
