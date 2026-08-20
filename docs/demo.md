@@ -31,11 +31,14 @@ The script builds `egresslens/base:latest` when needed and runs:
 egresslens run-app ./sample_app --args "all example.com"
 ```
 
-It writes the demo artifacts to `demo-output/`:
+It writes to `demo-output/`. The demo uploads three of the files it finds there:
 
 - `egress.jsonl`
 - `run.json`
 - `egress.strace`
+
+The traced app's own `cmd_stdout` and `cmd_stderr` land beside them, unused by the
+demo.
 
 Use `scripts/demo_capture.sh --rebuild` to force a Docker image rebuild. Override the demo domain with `DOMAIN=python.org scripts/demo_capture.sh`.
 

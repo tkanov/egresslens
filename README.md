@@ -8,11 +8,12 @@ Trace outbound network activity from Python apps in Docker, write the events as 
 
 ## What It Does
 
-EgressLens runs an app under `strace`, captures IPv4 network syscalls, and writes three files:
+EgressLens runs an app under `strace`, captures IPv4 network syscalls, and writes:
 
 - `egress.jsonl`: parsed connection events
 - `egress.strace`: raw trace output
 - `run.json`: command, image, timing, exit code, event counts
+- `cmd_stdout` and `cmd_stderr`: whatever the traced app printed
 
 Upload those to the UI for an aggregated report, with destinations named from DNS answers in the trace and bounded reverse DNS for the rest. Add an allowlist and the report gains a PASS/FAIL/INCONCLUSIVE verdict (see [Egress Policy](#egress-policy)).
 
@@ -85,7 +86,8 @@ More detail: [cli/README.md](cli/README.md).
 - `backend/`: FastAPI upload, aggregation, enrichment, policy, and export API
 - `frontend/`: React UI for uploads and reports
 - `sample_app/`: small app for predictable demo traffic
-- `scripts/` and `Dockerfile`: the tracing image, `demo_capture.sh`, `docker-build.sh`, `docker-teardown.sh`
+- `Dockerfile`, with `docker-build.sh`, `docker-teardown.sh`, and `test-docker.sh` beside it at the repo root: the tracing image
+- `scripts/demo_capture.sh`: one live capture for the demo flow
 - `docs/`: [getting started](docs/getting-started.md), [policy reference](docs/policy.md), [demo flow](docs/demo.md)
 
 ## Security Model
