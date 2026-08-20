@@ -28,9 +28,7 @@ docker build -t egresslens/base:latest .
 egresslens run-app ./sample_app --args "dns example.com"
 ```
 
-Output lands in `egresslens-output/`. With an allowlist to hand,
-`egresslens check egresslens-output/ --policy policy.json` turns that capture
-into a pass/fail exit code (see [Egress Policy](#egress-policy)).
+Output lands in `egresslens-output/`.
 
 ## View A Report
 
@@ -68,20 +66,7 @@ Before trusting a verdict:
 - Do not read "not FAIL" as PASS. INCONCLUSIVE means the capture gave the allowlist nothing to judge, and a failed capture looks identical to a genuinely quiet run.
 - A PASS covers only what was captured (see [Limits](#limits)) and is independent of the other flags, so it can appear next to an "Unusual ports" flag.
 
-### As A CI Gate
-
-`egresslens check` computes the same verdict from a capture directory and returns it as an exit code. It needs neither Docker nor the backend, only the files a capture wrote.
-
-```bash
-egresslens check egresslens-output/ --policy policy.json
-egresslens run-app ./my_app --policy policy.json      # capture, then judge
-```
-
-`0` is PASS, `1` is FAIL, `3` is INCONCLUSIVE and `2` is any input error, deliberately not `1`: a broken allowlist must never be reported as a violated one. The full table, including the codes `run-app` returns when a capture fails before there is anything to judge, is in [cli/README.md](cli/README.md#exit-codes).
-
-Reverse DNS is off by default here, because a gate that depends on live DNS is not reproducible. `--format json` puts the whole verdict on stdout for a job that wants to annotate a PR.
-
-Rule syntax, matching semantics, and known gotchas: [docs/policy.md](docs/policy.md).
+`egresslens check egresslens-output/ --policy policy.json` returns the same verdict as an exit code, without Docker or the backend, so a capture can gate CI. Exit codes and the reverse-DNS default: [cli/README.md](cli/README.md#exit-codes). Rule syntax, matching semantics, and known gotchas: [docs/policy.md](docs/policy.md).
 
 ## CLI
 
@@ -90,7 +75,7 @@ egresslens run-app ./my_python_app --args "arg1 arg2"   # a Python project
 egresslens watch -- curl https://example.com            # any command
 ```
 
-`run-app` looks for an entry point named `__main__.py`, `main.py`, or `app.py`. Options: `--args` (arguments for the traced app), `--out` (output path), `--image` (another image with `strace` installed), `--policy` (judge the capture afterwards, see [As A CI Gate](#as-a-ci-gate)), `--reverse-dns` (allow live reverse DNS when judging). `watch` takes the same options except `--args`.
+`run-app` looks for an entry point named `__main__.py`, `main.py`, or `app.py`. Options: `--args` (arguments for the traced app), `--out` (output path), `--image` (another image with `strace` installed), `--policy` (judge the capture afterwards, see [Egress Policy](#egress-policy)), `--reverse-dns` (allow live reverse DNS when judging). `watch` takes the same options except `--args`.
 
 `run-app` installs `requirements.txt` before tracing starts, so the trace covers the app and not pip. PyPI and its CDN are deliberately absent from the report; pip's output lands in `pip_install.log`, and a failed install exits 90 without writing a report.
 
