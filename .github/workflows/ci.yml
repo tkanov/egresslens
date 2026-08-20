@@ -40,9 +40,13 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: |
+            backend/requirements.txt
+            cli/pyproject.toml
+      # The CLI package carries the policy and enrichment engine that app.policy
+      # and app.enrichment re-export, so the backend does not import without it.
       - name: Install dependencies
-        run: pip install -r backend/requirements.txt pytest
+        run: pip install -e ./cli -r backend/requirements.txt pytest
       - name: Run backend tests
         working-directory: backend
         run: pytest -v
@@ -111,11 +115,14 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: |
+            backend/requirements.txt
+            cli/pyproject.toml
       # Playwright starts uvicorn itself via config.webServer, so the backend
-      # only has to be importable on PATH here.
+      # only has to be importable on PATH here -- which includes the CLI package,
+      # since app.policy re-exports its engine and uvicorn imports it at startup.
       - name: Install backend dependencies
-        run: pip install -r backend/requirements.txt
+        run: pip install -e ./cli -r backend/requirements.txt
       - uses: actions/setup-node@v7
         with:
           node-version: "20"

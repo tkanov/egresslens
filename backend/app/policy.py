@@ -1,340 +1,38 @@
-"""Egress policy: judge a report's destinations against a declared allowlist.
+"""Egress policy: re-exported from egresslens.policy, where the engine now lives.
 
-A policy is an optional, per-report allowlist uploaded alongside the report. It
-declares the destinations an app is *expected* to reach; anything observed that
-does not match a rule is reported as unexpected. This turns a descriptive report
-("here is what happened") into a verdict ("here is what should not have").
-
-The verdict is computed at upload time in the backend because that is the only
-place domains exist: the CLI captures IP/port connect events, and domain
-attribution (passive + reverse DNS) happens during enrichment.
-
-Policy file format (JSON)::
-
-    {
-      "allow": [
-        "*.github.com",                       // wildcard domain (subdomains only)
-        "pypi.org",                           // exact domain
-        "140.82.112.0/20",                    // IP or CIDR
-        {"domain": "files.pythonhosted.org"}, // explicit object form
-        {"ip": "151.101.0.0/16", "port": 443} // constrain the port too
-      ]
-    }
-
-Trust model: `ip`/CIDR rules match the real ``connect()`` destination and are a
-hard gate. `domain` rules match the domain attributed during enrichment, which
-is derived from DNS answers observed in the traced process's *own* trace, so a
-process actively trying to evade the allowlist could forge that attribution --
-domain rules are advisory against an adversarial subject. To keep the domain
-path from failing *open*, a destination that resolved to one or more domains is
-expected only if **every** observed domain matches a rule; a shared IP serving
-both an allowed and a disallowed name is reported as unexpected.
+The verdict has to be reachable from `egresslens check` in CI, and the CLI is a
+zero-dependency package on a 3.9 floor -- so the engine moved there rather than
+the CLI growing fastapi/pydantic to reach it. This module keeps `app.policy`
+importable, and is a compatibility seam only: no logic belongs here.
 """
-from __future__ import annotations
+try:
+    from egresslens.policy import (  # the egresslens CLI package is a backend dependency
+        MAX_RULES,
+        MAX_UNEXPECTED,
+        AllowRule,
+        IPNetwork,
+        Policy,
+        PolicyError,
+        domain_matches,
+        evaluate_policy,
+        load_policy,
+        resolve_destinations,
+    )
+except ImportError as exc:  # pragma: no cover - install-time failure, not a code path
+    raise ImportError(
+        "the egresslens CLI package provides the policy engine; install it with "
+        "`pip install -e ./cli` from the repo root"
+    ) from exc
 
-import ipaddress
-import re
-from collections import Counter, defaultdict
-from dataclasses import dataclass, field
-from typing import List, Optional, Union
-
-from app.enrichment import choose_primary_domain, event_domain_candidates
-from app.schemas import EventSchema
-
-IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
-
-# Domain labels only ever contain these characters. Rejecting anything else keeps
-# a typo from silently becoming a rule that never (or always) matches.
-_DOMAIN_LABEL_RE = re.compile(r"[a-z0-9-]+")
-
-# Bounds that keep a single upload from pinning a worker thread. These cap the
-# rule-matching term, which is O(rules * destinations), and the size of the
-# unexpected list that is stored, returned, and rendered. Note what they do NOT
-# cap: the cost of resolving destinations from events. That term is O(events)
-# and is bounded only by the upload size cap -- see resolve_destinations, which
-# used to rescan every event per destination and dominated everything here.
-MAX_RULES = 1000
-MAX_UNEXPECTED = 50
-
-
-class PolicyError(ValueError):
-    """Raised when an uploaded policy document is malformed."""
-
-
-@dataclass
-class AllowRule:
-    """One allowlist entry. A destination matches only if every set field does."""
-
-    domain: Optional[str] = None
-    network: Optional[IPNetwork] = None
-    port: Optional[int] = None
-
-    def _port_ok(self, port: int) -> bool:
-        return self.port is None or port == self.port
-
-    def _network_ok(self, ip: str) -> bool:
-        if self.network is None:
-            return True
-        try:
-            return ipaddress.ip_address(ip) in self.network
-        except ValueError:
-            return False
-
-    def matches_ip(self, ip: str, port: int) -> bool:
-        """Hard match on the real connection destination (no domain involved)."""
-        return self.network is not None and self._port_ok(port) and self._network_ok(ip)
-
-    def matches_domain(self, domain: str, ip: str, port: int) -> bool:
-        """Match one attributed domain, honouring any ip/port constraints too."""
-        return (
-            self.domain is not None
-            and self._port_ok(port)
-            and self._network_ok(ip)
-            and domain_matches(self.domain, domain)
-        )
-
-
-@dataclass
-class Policy:
-    """A parsed allowlist."""
-
-    rules: List[AllowRule] = field(default_factory=list)
-
-    def allows(self, ip: str, port: int, domains: List[str]) -> bool:
-        """Decide whether a destination is expected.
-
-        Expected if a hard IP/CIDR rule covers it, or -- when it resolved to one
-        or more domains -- if *every* observed domain matches a domain rule. An
-        unresolved destination (no domains) can only be allowed by an IP rule.
-        """
-        if any(rule.matches_ip(ip, port) for rule in self.rules if rule.domain is None):
-            return True
-        if not domains:
-            return False
-        return all(
-            any(
-                rule.matches_domain(domain, ip, port)
-                for rule in self.rules
-                if rule.domain is not None
-            )
-            for domain in domains
-        )
-
-
-def domain_matches(pattern: str, domain: str) -> bool:
-    """Match a destination domain against an allowlist pattern.
-
-    ``*.example.com`` matches ``api.example.com`` and ``a.b.example.com`` but not
-    the apex ``example.com`` nor look-alikes such as ``notexample.com`` or
-    ``example.com.evil.com`` -- the leading-dot boundary is what makes this safe
-    to use in a security verdict. Any other pattern is an exact, case-insensitive
-    match.
-    """
-    pattern = pattern.lower()
-    domain = domain.lower()
-    if pattern.startswith("*."):
-        return domain.endswith(pattern[1:])
-    return domain == pattern
-
-
-def load_policy(data: object) -> Policy:
-    """Parse and validate a policy document, raising PolicyError on any problem."""
-    if not isinstance(data, dict):
-        raise PolicyError("policy must be a JSON object")
-    if "allow" not in data:
-        raise PolicyError("policy must contain an 'allow' list")
-    allow = data["allow"]
-    if not isinstance(allow, list):
-        raise PolicyError("policy 'allow' must be a list")
-    if not allow:
-        raise PolicyError("policy 'allow' must contain at least one rule")
-    if len(allow) > MAX_RULES:
-        raise PolicyError(f"policy 'allow' must not exceed {MAX_RULES} rules")
-
-    rules = [_parse_rule(entry, index) for index, entry in enumerate(allow)]
-    return Policy(rules=rules)
-
-
-def _parse_rule(entry: object, index: int) -> AllowRule:
-    where = f"allow[{index}]"
-    if isinstance(entry, str):
-        return _rule_from_token(entry, where)
-    if isinstance(entry, dict):
-        return _rule_from_object(entry, where)
-    raise PolicyError(f"{where} must be a string or an object")
-
-
-def _rule_from_token(token: str, where: str) -> AllowRule:
-    """Interpret a shorthand string as an IP/CIDR rule, else a domain rule."""
-    stripped = token.strip()
-    if not stripped:
-        raise PolicyError(f"{where} is empty")
-    network = _try_network(stripped)
-    if network is not None:
-        return AllowRule(network=network)
-    return AllowRule(domain=_validate_domain(stripped, where))
-
-
-def _rule_from_object(obj: dict, where: str) -> AllowRule:
-    unknown = set(obj) - {"domain", "ip", "port"}
-    if unknown:
-        raise PolicyError(f"{where} has unknown key(s): {sorted(unknown)}")
-
-    domain_val = obj.get("domain")
-    ip_val = obj.get("ip")
-    port_val = obj.get("port")
-
-    if domain_val is None and ip_val is None:
-        raise PolicyError(f"{where} must set 'domain' or 'ip'")
-
-    domain = None
-    if domain_val is not None:
-        if not isinstance(domain_val, str):
-            raise PolicyError(f"{where} 'domain' must be a string")
-        domain = _validate_domain(domain_val, where)
-
-    network = None
-    if ip_val is not None:
-        if not isinstance(ip_val, str):
-            raise PolicyError(f"{where} 'ip' must be a string")
-        network = _try_network(ip_val)
-        if network is None:
-            raise PolicyError(f"{where} 'ip' is not a valid IP address or CIDR: {ip_val!r}")
-
-    port = None
-    if port_val is not None:
-        # bool is an int subclass; reject it so `true` isn't read as port 1.
-        if isinstance(port_val, bool) or not isinstance(port_val, int):
-            raise PolicyError(f"{where} 'port' must be an integer")
-        if not (1 <= port_val <= 65535):
-            raise PolicyError(f"{where} 'port' must be between 1 and 65535")
-        port = port_val
-
-    return AllowRule(domain=domain, network=network, port=port)
-
-
-def _try_network(value: str) -> Optional[IPNetwork]:
-    try:
-        return ipaddress.ip_network(value, strict=False)
-    except ValueError:
-        return None
-
-
-def _validate_domain(value: str, where: str) -> str:
-    domain = value.strip().lower().rstrip(".")
-    if not domain:
-        raise PolicyError(f"{where} domain is empty")
-    wildcard = domain.startswith("*.")
-    body = domain[2:] if wildcard else domain
-    if not body:
-        raise PolicyError(f"{where} domain is empty after wildcard")
-    if "*" in body:
-        raise PolicyError(
-            f"{where} domain wildcard is only supported as a leading '*.': {value!r}"
-        )
-    for label in body.split("."):
-        if not label:
-            raise PolicyError(f"{where} domain has an empty label: {value!r}")
-        if not _DOMAIN_LABEL_RE.fullmatch(label):
-            raise PolicyError(f"{where} domain has invalid characters: {value!r}")
-        if label.startswith("-") or label.endswith("-"):
-            raise PolicyError(f"{where} domain label may not start or end with '-': {value!r}")
-    return domain
-
-
-def resolve_destinations(
-    events: List[EventSchema],
-    domain_candidates: dict,
-) -> List[dict]:
-    """Collapse events into unique (ip, port) destinations with attributed domains.
-
-    Mirrors the per-destination resolution in compute_aggregates so the verdict
-    is consistent with the top-destinations table, but covers *every* destination
-    rather than the displayed top 50. Each destination carries a ``domain``
-    (primary, for display) and ``domains`` (all observed names, used to decide the
-    verdict so a shared IP cannot mask a disallowed name).
-    """
-    dest_counter = Counter((event.dst_ip, event.dst_port) for event in events)
-
-    proto_counters: dict = defaultdict(Counter)
-    for event in events:
-        proto_counters[(event.dst_ip, event.dst_port)][event.proto] += 1
-
-    # One pass over the events, not one pass per destination. The verdict covers
-    # every destination rather than a displayed top-N, so the rescan this
-    # replaces was the dominant cost of the whole upload: evaluate_policy went
-    # from 588.4s to 0.39s on a report at the 50 MB cap, on a synchronous
-    # endpoint that holds a worker thread for the duration.
-    event_candidates = event_domain_candidates(events)
-
-    destinations = []
-    for (ip, port), count in dest_counter.most_common():
-        # An empty list from enrichment falls through to the event fallback, as
-        # a missing key does.
-        candidates = list(domain_candidates.get(ip) or event_candidates.get(ip, []))
-        primary = choose_primary_domain(candidates) if candidates else None
-        destinations.append({
-            "dst_ip": ip,
-            "dst_port": port,
-            "proto": proto_counters[(ip, port)].most_common(1)[0][0],
-            "count": count,
-            "domain": primary.domain if primary else None,
-            "domains": sorted({candidate.domain for candidate in candidates}),
-        })
-    return destinations
-
-
-def evaluate_policy(
-    policy: Policy,
-    events: List[EventSchema],
-    domain_candidates: dict,
-) -> dict:
-    """Judge every observed destination against the policy and return a verdict.
-
-    The verdict is ``pass``, ``fail``, or ``inconclusive`` -- the last when there
-    was nothing to judge. ``destinations_evaluated`` reports how many
-    destinations the verdict actually covers, so a consumer can tell a compliant
-    run from an empty one.
-    """
-    destinations = resolve_destinations(events, domain_candidates)
-
-    unexpected = []
-    expected_count = 0
-    for dest in destinations:
-        if policy.allows(dest["dst_ip"], dest["dst_port"], dest["domains"]):
-            expected_count += 1
-        else:
-            unexpected.append({
-                "dst_ip": dest["dst_ip"],
-                "dst_port": dest["dst_port"],
-                "proto": dest["proto"],
-                "count": dest["count"],
-                "domain": dest["domain"],
-            })
-
-    unexpected.sort(key=lambda d: (-d["count"], d["dst_ip"], d["dst_port"]))
-
-    # Three-way on purpose. With no observed destinations the allowlist was never
-    # exercised, so "pass" would be a vacuous truth reported as a security
-    # result: a failed capture, the wrong file uploaded, and a genuinely quiet
-    # run are indistinguishable here. Say so instead of asserting compliance.
-    if not destinations:
-        verdict = "inconclusive"
-    elif unexpected:
-        verdict = "fail"
-    else:
-        verdict = "pass"
-
-    return {
-        "enabled": True,
-        "verdict": verdict,
-        "destinations_evaluated": len(destinations),
-        "allow_rules": len(policy.rules),
-        # Whether any rule matched on a (forgeable) domain rather than a hard
-        # ip/CIDR, so the surface can flag a domain-based verdict as advisory.
-        "has_domain_rules": any(rule.domain is not None for rule in policy.rules),
-        "expected_count": expected_count,
-        "unexpected_count": len(unexpected),
-        # Store/return a bounded slice; unexpected_count stays exact.
-        "unexpected": unexpected[:MAX_UNEXPECTED],
-    }
+__all__ = [
+    "MAX_RULES",
+    "MAX_UNEXPECTED",
+    "AllowRule",
+    "IPNetwork",
+    "Policy",
+    "PolicyError",
+    "domain_matches",
+    "evaluate_policy",
+    "load_policy",
+    "resolve_destinations",
+]

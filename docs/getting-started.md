@@ -15,8 +15,12 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install -e ../cli
 uvicorn app.main:app --reload --port 8000
 ```
+
+`pip install -e ../cli` is required, not an extra: the policy and enrichment
+engine lives in the `egresslens` package and the backend re-exports it.
 
 Leave this terminal running. The API will be available at `http://localhost:8000`.
 
@@ -58,7 +62,7 @@ The CLI defaults to this local image.
 From the repo root:
 
 ```bash
-egresslens run-app ./sample_app --args "dns example.com"
+egresslens run-app ./sample_app --args "all example.com"
 ```
 
 Example:
@@ -166,12 +170,38 @@ supposed to reach into a `policy.json`:
 ```json
 {
   "allow": [
-    "example.com",
-    "*.python.org",
-    "192.168.1.1/32"
+    { "ip": "192.168.65.7", "port": 53 },
+    "crt.sh"
   ]
 }
 ```
+
+**Use your own resolver address, not that one.** Take it from the `dst_port: 53`
+lines of the `egress.jsonl` you just captured: it is whatever resolves names
+inside the container, which is `192.168.65.7` on Docker Desktop and something
+else nearly everywhere else. That is also why it needs an `ip` rule rather than a
+domain rule -- the resolver is the address DNS answers come *from*, so no answer
+ever names it, and a `domain` rule can never match it. `crt.sh` is the one
+destination in the `all` run that a DNS answer does name.
+
+Against the `all example.com` capture from Step 5, that allowlist gives:
+
+```
+$ egresslens check egresslens-output/ --policy policy.json
+Egress policy: PASS
+  Allowlist: policy.json (2 rules)
+  Events: 5 from egresslens-output/egress.jsonl
+  Destinations evaluated: 2 (2 expected, 0 unexpected)
+  Expected via ip/CIDR rule: 1
+  Expected via domain rule only: 1 (advisory)
+
+  Note: Domain rules are advisory: the matched domain is attributed from the
+  traced process's own DNS traffic and could be forged by an evading subject.
+  ip/CIDR rules are the hard gate.
+```
+
+One of those two destinations passed on a name, which is what that last note is
+for: `crt.sh` was matched from a DNS answer in the app's own trace.
 
 Upload it in the egress allowlist picker alongside the same `egress.jsonl`. Every
 observed destination is then checked against the list, and the report gains a
@@ -185,12 +215,33 @@ INCONCLUSIVE is not a quiet pass: it means the capture gave the allowlist nothin
 to judge, which looks the same whether the run was genuinely silent or the
 capture failed.
 
+Or skip the UI: `egresslens check` computes the same verdict from the output
+directory and returns it as an exit code, which is what a CI job wants.
+
+```bash
+egresslens check egresslens-output/ --policy policy.json
+echo $?    # 0 PASS, 1 FAIL, 2 error, 3 INCONCLUSIVE
+```
+
+`2` covers a malformed allowlist or missing artifacts, so it is never confused
+with a FAIL; the full table is in
+[cli/README.md](../cli/README.md#exit-codes). Reverse DNS is off there by
+default, unlike on upload, to keep the same artifacts giving the same answer on
+every run.
+
+Run `--args "dns example.com"` instead, which reaches only the resolver, and the
+same allowlist still passes but prints a note saying the trace named none of the
+observed destinations. That is
+worth reading rather than dismissing: that capture reaches only the resolver, so
+the `crt.sh` rule did nothing and the whole verdict rested on the `ip` rule.
+
 Rule syntax, and why `domain` rules are advisory while `ip`/CIDR rules are a hard
 gate, are covered in [docs/policy.md](policy.md).
 
 Two things to watch when writing a policy: `allow` is the only key honoured — a
-`deny` block is silently ignored rather than rejected, so it will not do what it
-looks like it does — and a rule combining `domain` and `ip` is not an IP hard
+`deny` block written beside it is dropped without warning, so it will not do what
+it looks like it does, while a file containing *only* `deny` has no allowlist and
+is rejected outright — and a rule combining `domain` and `ip` is not an IP hard
 gate; write the `ip` rule separately.
 
 ---
@@ -199,9 +250,25 @@ gate; write the `ip` rule separately.
 
 ### Domain enrichment scope
 
-Domain enrichment is backend-only. The CLI still writes the same `egress.jsonl` event format, and enrichment is applied only when a report is uploaded. Passive DNS currently parses UDP DNS A-record responses read via `recvfrom` or `recvmsg` in `egress.strace`; DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, IPv6 enrichment, and answers received via `recvmmsg` are outside the current scope.
+Domain enrichment runs on upload and in `egresslens check`, which share one engine; the CLI's capture step still writes the plain `egress.jsonl` event format either way. The two differ in one default: reverse DNS is on for an upload and off for `check`, so that a gate does not depend on live lookups. Passive DNS currently parses UDP DNS A-record responses read via `recvfrom` or `recvmsg` in `egress.strace`; DNS-over-HTTPS, DNS-over-TLS, cached DNS, TCP DNS, AAAA records, IPv6 enrichment, and answers received via `recvmmsg` are outside the current scope.
 
-Reverse DNS fallback is enabled by default but bounded by configuration: `ENRICHMENT_REVERSE_DNS_TIMEOUT_SECONDS` defaults to `0.5`, and `ENRICHMENT_REVERSE_DNS_MAX_IPS` defaults to `100`. It skips private, loopback, link-local, multicast, unspecified, and reserved ranges.
+Reverse DNS fallback is enabled by default on upload but bounded by configuration: `ENRICHMENT_REVERSE_DNS_TIMEOUT_SECONDS` defaults to `0.5`, and `ENRICHMENT_REVERSE_DNS_MAX_IPS` defaults to `100`. `egresslens check` takes the same bounds as `--reverse-dns-timeout` and `--reverse-dns-max-ips`, but only looks anything up with `--reverse-dns`. Either way it skips private, loopback, link-local, multicast, unspecified, and reserved ranges.
+
+### Destinations that are counted but not reported
+
+A UDP `connect()` that never sends anything did not reach its address: glibc's
+address sorting connect()s a UDP socket to each candidate answer just to ask the
+kernel which source address it would use. Those are excluded from the report and
+counted in `run.json` as `counts.udp_probes_skipped`, so the difference between
+the trace and the report is always a number you can read. `egresslens check`
+raises no note for them, since nothing was contacted; it does raise one for
+`counts.ipv6_connects_skipped`, since those destinations were reached and cannot
+be judged.
+
+Two shapes are counted as probes even though they may not be, because
+`-e trace=network` records neither syscall: a connected UDP socket written with
+`write()` rather than `send*()`, and traffic sent through a `dup()` of a
+connected fd.
 
 ### IPv4 only
 

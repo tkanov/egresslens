@@ -12,8 +12,12 @@ Requires Python 3.10+ (FastAPI and `python-multipart` both declare that floor).
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+pip install -e ../cli
 uvicorn app.main:app --reload --port 8000
 ```
+
+The second install is not optional: the policy and enrichment engine lives in the
+`egresslens` CLI package, and `app.policy` / `app.enrichment` re-export it.
 
 The API is then at `http://localhost:8000`, with interactive docs at `/docs`.
 
@@ -84,9 +88,20 @@ Two bounds worth knowing: an allowlist may hold at most 1000 rules (more is a
 Rule syntax and the trust model — why `domain` rules are advisory and `ip`/CIDR
 rules are a hard gate — are in [docs/policy.md](../docs/policy.md).
 
+The engine itself lives in `egresslens.policy` and `egresslens.enrichment`;
+`app.policy` and `app.enrichment` re-export it and hold no logic. It moved there
+so `egresslens check` can compute the same verdict from capture artifacts as a CI
+gate, without a server. Two consequences worth knowing: reverse DNS defaults on
+here and off there, and this endpoint requires event fields the CLI's loader does
+not, so it rejects with a 400 some files `check` will grade. Both are spelled out
+under [where the CLI and the UI agree,
+exactly](../docs/policy.md#where-the-cli-and-the-ui-agree-exactly);
+`test_engine_shim.py` pins the list.
+
 > **Caveat:** unknown *top-level* keys in a policy file are currently ignored
-> without warning, so a `deny` list written by mistake is silently dropped and
-> the run can report `pass`. Unknown keys *inside* a rule object are rejected.
+> without warning, so a `deny` list written beside `allow` is silently dropped and
+> the run can report `pass`. A document containing *only* `deny` has no allowlist
+> and is rejected with a 400. Unknown keys *inside* a rule object are rejected.
 > Only `allow` is honoured.
 
 ## Domain enrichment
@@ -152,7 +167,7 @@ FLAG_HIGH_DEST_THRESHOLD=100 uvicorn app.main:app --reload --port 8000
 pytest is not in `requirements.txt`, so install it too:
 
 ```bash
-pip install -r requirements.txt pytest
+pip install -r requirements.txt -e ../cli pytest
 pytest -v
 ```
 

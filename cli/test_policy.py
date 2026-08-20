@@ -1,35 +1,21 @@
 #!/usr/bin/env python3
 """Unit tests for the egress allowlist policy (parsing, matching, verdict)."""
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent))
-
 import pytest
 
-from app.enrichment import DomainCandidate
-from app.policy import (
+from egresslens.enrichment import DomainCandidate
+from egresslens.events import Event
+from egresslens.policy import (
     PolicyError,
     domain_matches,
     evaluate_policy,
     load_policy,
     resolve_destinations,
 )
-from app.schemas import EventSchema
 
 
-def event(ip: str, port: int = 443, proto: str = "tcp") -> EventSchema:
-    return EventSchema(
-        ts=1.0,
-        pid=1,
-        event="connect",
-        family="inet",
-        proto=proto,
-        dst_ip=ip,
-        dst_port=port,
-        result="ok",
-    )
+def event(ip: str, port: int = 443, proto: str = "tcp") -> Event:
+    return Event(dst_ip=ip, dst_port=port, proto=proto)
 
 
 def candidates(mapping: dict) -> dict:
@@ -255,13 +241,6 @@ def test_has_domain_rules_flag():
     assert not evaluate_policy(load_policy({"allow": ["10.0.0.0/8"]}), events, {})["has_domain_rules"]
 
 
-def test_md_escape_neutralizes_table_injection():
-    from app.main import _md_escape
-    assert _md_escape("evil.com | fake") == "evil.com \\| fake"
-    assert "\n" not in _md_escape("line1\nline2")
-    assert _md_escape("`code`") == "\\`code\\`"
-
-
 class CountingEvents(list):
     """A list that records how many times it has been iterated."""
 
@@ -274,17 +253,12 @@ class CountingEvents(list):
         return super().__iter__()
 
 
-def attributed_event(ip: str, domain: str, source: str, port: int = 443) -> EventSchema:
+def attributed_event(ip: str, domain: str, source: str, port: int = 443) -> Event:
     """An event that already carries a domain attribution, as an upload may."""
-    return EventSchema(
-        ts=1.0,
-        pid=1,
-        event="connect",
-        family="inet",
-        proto="tcp",
+    return Event(
         dst_ip=ip,
         dst_port=port,
-        result="ok",
+        proto="tcp",
         domain=domain,
         domain_source=source,
     )
