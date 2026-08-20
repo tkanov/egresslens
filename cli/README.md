@@ -15,7 +15,7 @@ This is what puts the `egresslens` command on your PATH. Installing
 `cli/requirements.txt` alone pulls in the dependencies but not the command.
 
 The `[docker]` extra (`pip install -e './cli[docker]'`) adds the Docker SDK.
-Without it the runner shells out to the `docker` CLI instead, which works fine —
+Without it the runner shells out to the `docker` CLI instead, which works fine –
 the extra just selects which path runs.
 
 ## Quick start
@@ -31,7 +31,7 @@ Output goes to `egresslens-output/`.
 
 ## Commands
 
-### `run-app` — trace a Python project
+### `run-app` – trace a Python project
 
 ```bash
 egresslens run-app ./my_python_app --args "arg1 arg2"
@@ -57,17 +57,17 @@ reason for the failure is in `pip_install.log`.
 > runnable-package layout is the one that breaks. Use `main.py` or `app.py` for
 > now; the failure is pinned by a strict xfail in `test_docker_runner.py`.
 
-### `watch` — trace any command
+### `watch` – trace any command
 
 ```bash
 egresslens watch -- curl https://example.com
 ```
 
 Everything after `--` is the command. It runs inside the tracing image, so the
-binaries and libraries it needs must already be in that image — `watch` does not
+binaries and libraries it needs must already be in that image – `watch` does not
 install anything.
 
-### `check` — judge a capture against an allowlist
+### `check` – judge a capture against an allowlist
 
 ```bash
 egresslens check egresslens-output/ --policy policy.json
@@ -92,27 +92,27 @@ on stdout and nothing else, unexpected destinations included.
 
 #### Exit codes
 
-Every code any of the three commands can return. This is the only copy; the other
+Every code any of the three commands can return. This is the only copy, the other
 docs link here.
 
 | Code | Command | Meaning |
 |---|---|---|
 | `0` | all | PASS, or a capture that ran with no allowlist to judge it |
-| `1` | `check` | FAIL — at least one destination was off the allowlist |
+| `1` | `check` | FAIL – at least one destination was off the allowlist |
 | `1` | `run-app` | The app directory could not be used (no entry point, bad syntax) |
-| `2` | `check` | Error — missing or unreadable artifacts, or a malformed allowlist |
-| `3` | `check` | INCONCLUSIVE — an allowlist was supplied and nothing was observed |
+| `2` | `check` | Error – missing or unreadable artifacts, or a malformed allowlist |
+| `3` | `check` | INCONCLUSIVE – an allowlist was supplied and nothing was observed |
 | `90` | `run-app` | Installing `requirements.txt` failed, so the app never ran and no report was written |
 | other | `run-app`, `watch` | The traced command's own exit code, passed through |
 
 `2` is never `1`: a policy that could not be read must not be reported as a
-policy that was violated. `3` is not a pass either — see
+policy that was violated. `3` is not a pass either – see
 [docs/policy.md](../docs/policy.md#verdicts).
 
 Two codes are shared and cannot be told apart by number alone: `run-app` returns
 `1` both for an unusable app directory and, under `--policy`, for a FAIL, and a
 traced command that exits `3` on its own is indistinguishable from INCONCLUSIVE.
-Both are deliberate — the alternative is rewriting exit codes the capture owns —
+Both are deliberate – the alternative is rewriting exit codes the capture owns –
 and both are unambiguous in `--format json` and on stderr.
 
 With `--policy` on `run-app` or `watch`, a non-pass verdict becomes the exit code
@@ -129,12 +129,12 @@ turning that into a `2` would point at the allowlist instead of at pip. Without
 | `--out <path>` | `run-app`, `watch` | Where to write output (default `egresslens-output/`) |
 | `--image <name>` | `run-app`, `watch` | Tracing image to use (default `egresslens/base:latest`) |
 | `--args "<args>"` | `run-app` | Arguments passed to the traced app |
-| `--policy <path>` | all three | Allowlist to judge the capture against; required by `check` |
+| `--policy <path>` | all three | Allowlist to judge the capture against, required by `check` |
 | `--reverse-dns` | all three | Allow live reverse DNS for unnamed public IPs (off by default) |
 | `--events <path>` | `check` | Events file (default `<dir>/egress.jsonl`) |
 | `--strace <path>` | `check` | Trace to read passive DNS from (default: the `egress.strace` beside the events file, if present) |
 | `--format text\|json` | `check` | Output format (default `text`) |
-| `--version` | — | Print the version |
+| `--version` | – | Print the version |
 
 `check` also takes `--reverse-dns-timeout` (default `0.5`) and
 `--reverse-dns-max-ips` (default `100`), matching the backend's bounds.
@@ -146,7 +146,7 @@ Written to the output directory:
 | File | Contents |
 |---|---|
 | `egress.jsonl` | One JSON object per network event |
-| `egress.strace` | Raw strace output — upload this for domain enrichment |
+| `egress.strace` | Raw strace output – upload this for domain enrichment |
 | `run.json` | Run ID, command, image, timing, exit code, event counts |
 | `cmd_stdout` | The traced command's stdout |
 | `cmd_stderr` | The traced command's stderr |
@@ -162,7 +162,7 @@ the gap is visible even when the destinations are not:
 
 `check` reads both. It raises a note for skipped IPv6 connections, because those
 destinations were reached and are not in the verdict, and stays quiet about the
-UDP probes, because those addresses were never contacted -- glibc's address
+UDP probes, because those addresses were never contacted – glibc's address
 sorting `connect()`s a UDP socket to each candidate answer purely to ask the
 kernel which source address it would pick. Both counters appear under `capture`
 in `--format json`; of the two, only `ipv6_connects_skipped` is rendered by the
@@ -175,9 +175,9 @@ neither syscall, so nothing in the trace can tell them apart from a probe.
 
 A UDP `connect()` with no send on the same socket is excluded, and counted under
 `counts.udp_probes_skipped`. `connect()` on a datagram socket only sets a default
-peer; it transmits nothing. glibc's resolver does one per candidate address to
+peer, it transmits nothing. glibc's resolver does one per candidate address to
 learn which source address the kernel would pick (RFC 6724), so reporting them
-would list destinations the process never contacted — for an app calling
+would list destinations the process never contacted – for an app calling
 `socket.gethostbyname` that was two thirds of its events. The test is
 behavioural, not a port filter: a `connect()` followed by any send or receive on
 that socket is real egress and is kept, including DNS over a connected socket. A
@@ -235,5 +235,5 @@ locally installed `strace` and skips cleanly if `strace` is missing.
 ## Requirements
 
 - Python 3.9+
-- Docker — required for `run-app` and `watch`, not optional; there is no
+- Docker – required for `run-app` and `watch`, not optional, there is no
   host-only mode. `check` needs neither Docker nor the backend: it reads files.
