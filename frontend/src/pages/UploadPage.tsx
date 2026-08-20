@@ -104,7 +104,7 @@ export function UploadPage() {
 
   return (
     <div className="min-h-screen bg-background p-6">
-      <div className="mx-auto max-w-2xl space-y-6">
+      <div className="mx-auto max-w-2xl space-y-6" data-testid="upload-page">
         <Card>
           <CardHeader>
             <CardTitle>Upload Egress Report</CardTitle>

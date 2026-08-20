@@ -45,12 +45,22 @@ domain value. The report page can also export to Markdown.
 | `npm run build` | `tsc && vite build` → `dist/`; also the only typecheck path |
 | `npm run lint` | ESLint, zero warnings tolerated — a CI merge gate |
 | `npm run preview` | Serve the built `dist/` locally |
-| `npm run test:e2e` | Full Playwright suite |
+| `npm run test:e2e` | Smoke and demo projects |
 | `npm run test:e2e:smoke` | Smoke project only — a CI merge gate |
 | `npm run demo:record` | Records the demo video (see [docs/demo.md](../docs/demo.md)) |
+| `npm run docs:screenshots` | Rewrites the two screenshots in `docs/images/` |
 
 Playwright starts the backend and frontend itself, reusing them if already
 running. Browsers install with `npx playwright install chromium`.
+
+`test:e2e` names its two projects rather than running everything, because the
+`docs` project overwrites committed files and a test run should not do that as a
+side effect. `docs:screenshots` regenerates `docs/images/ui-frontend.png` and
+`docs/images/report.png` from `tests/fixtures/`, whose destinations are all
+RFC1918 — passive DNS still resolves from `egress.strace`, but the reverse-DNS
+fallback skips private addresses, so the images do not vary with the network.
+Re-run it whenever the upload or report page changes shape; the originals were
+hand-taken and had drifted by three UI features before anyone noticed.
 
 ## Structure
 

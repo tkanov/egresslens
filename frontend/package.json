@@ -8,9 +8,10 @@
     "build": "tsc && vite build",
     "lint": "eslint . --max-warnings 0",
     "preview": "vite preview",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --project=smoke --project=demo",
     "test:e2e:smoke": "playwright test --project=smoke",
-    "demo:record": "playwright test --project=demo"
+    "demo:record": "playwright test --project=demo",
+    "docs:screenshots": "playwright test --project=docs"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.3.3",

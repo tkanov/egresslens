@@ -1,13 +1,16 @@
 import { defineConfig } from '@playwright/test'
 
-// Two projects because the two specs want opposite things. `smoke` is the merge
-// gate: small viewport, no video, no artifacts unless it fails. `demo` is the
-// recorder behind `npm run demo:record`, which needs the large viewport and
-// video that make a usable screen capture.
+// Three projects because the three specs want different things. `smoke` is the
+// merge gate: small viewport, no video, no artifacts unless it fails. `demo` is
+// the recorder behind `npm run demo:record`, which needs the large viewport and
+// video that make a usable screen capture. `docs` is the still-image generator
+// behind `npm run docs:screenshots`.
 //
-// `npm run test:e2e` still runs both. CI runs --project=smoke, because the demo
-// spec depends on demo-output/ from a real Docker capture and cannot run without
-// one.
+// `npm run test:e2e` names smoke and demo explicitly rather than running
+// everything, because `docs` overwrites committed files in docs/images/ and a
+// test run must not do that as a side effect. CI runs --project=smoke, because
+// the demo spec depends on demo-output/ from a real Docker capture and cannot
+// run without one.
 export default defineConfig({
   testDir: './tests',
   timeout: 120_000,
@@ -50,6 +53,25 @@ export default defineConfig({
           mode: 'on',
           size: { width: 2560, height: 1440 },
         },
+      },
+    },
+    {
+      name: 'docs',
+      testMatch: /docs-screenshots\.spec\.ts/,
+      use: {
+        browserName: 'chromium',
+        // Wide enough to clear Tailwind's xl breakpoint at 1280px, which is what
+        // lays the five KPI cards out in one row instead of wrapping them.
+        viewport: { width: 1400, height: 900 },
+        deviceScaleFactor: 2,
+        video: 'off',
+        screenshot: 'off',
+        // Pinned so a committed image does not depend on where it was generated.
+        // RunDetails formats with the system locale and zone, so without this the
+        // report shot renders whatever the generator's machine happened to be in,
+        // and its clock disagrees with the timeline, which labels buckets in UTC.
+        timezoneId: 'UTC',
+        locale: 'en-GB',
       },
     },
   ],

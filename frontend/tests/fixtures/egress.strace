@@ -1,0 +1,11 @@
+11    1770382105.140118 socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC, IPPROTO_IP) = 3
+11    1770382105.150182 connect(3, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("10.10.0.53")}, 16) = 0
+11    1770382105.160204 sendto(3, "\4\322\1\0\0\1\0\0\0\0\0\0\3api\10internal\7example\0\0\1\0\1", 38, MSG_NOSIGNAL, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("10.10.0.53")}, 16) = 38
+11    1770382105.171338 recvfrom(3, "\4\322\201\200\0\1\0\1\0\0\0\0\3api\10internal\7example\0\0\1\0\1\300\14\0\1\0\1\0\0\0\36\0\4\n\n\0\n", 2048, 0, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("10.10.0.53")}, [28 => 16]) = 54
+11    1770382105.180411 sendto(3, "\4\323\1\0\0\1\0\0\0\0\0\0\3api\10internal\7example\0\0\34\0\1", 38, MSG_NOSIGNAL, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("10.10.0.53")}, 16) = 38
+11    1770382105.190740 recvfrom(3, "\4\323\201\200\0\1\0\0\0\0\0\0\3api\10internal\7example\0\0\1\0\1", 2048, 0, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("10.10.0.53")}, [28 => 16]) = 38
+11    1770382105.200730 connect(3, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("10.10.0.10")}, 16) = 0
+12    1770382106.010455 sendto(3, "\32{\1\0\0\1\0\0\0\0\0\0\6legacy\10internal\7example\0\0\1\0\1", 41, MSG_NOSIGNAL, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("10.10.0.53")}, 16) = 41
+12    1770382106.021884 recvfrom(3, "\32{\201\200\0\1\0\1\0\0\0\0\6legacy\10internal\7example\0\0\1\0\1\300\14\0\1\0\1\0\0\0\36\0\4\n\n\0c", 2048, 0, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("10.10.0.53")}, [28 => 16]) = 57
+12    1770382106.104882 connect(3, {sa_family=AF_INET, sin_port=htons(9999), sin_addr=inet_addr("10.10.0.99")}, 16) = -1 ECONNREFUSED (Connection refused)
+12    1770382106.480221 recvfrom(3, "\4\324\201\200\0\1\0\1\0\0\0\0\3api\10internal\7example\0\0\1\0\1\300\14\0\1\0\1\0\0\0\36\0\4\n\n\0\n", 2048, 0, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("10.10.0.53")}, [28 => 16]) = 54
