@@ -26,7 +26,12 @@ from egresslens.check_command import (
 from egresslens.main import cli
 
 
-def connect(ip: str, port: int = 443, proto: str = "tcp", **extra) -> dict:
+# Any field given this value is left out of the record entirely, which is how the
+# tests below say "absent" without a second helper.
+DROP = "__DROP__"
+
+
+def connect(ip="1.2.3.4", port: int = 443, proto: str = "tcp", **extra) -> dict:
     """One captured event, in the shape the CLI writes."""
     record = {
         "ts": 1.0,
@@ -39,7 +44,7 @@ def connect(ip: str, port: int = 443, proto: str = "tcp", **extra) -> dict:
         "result": "ok",
     }
     record.update(extra)
-    return record
+    return {key: value for key, value in record.items() if value != DROP}
 
 
 def write_events(directory: Path, records: list) -> Path:
@@ -235,19 +240,84 @@ def test_events_line_that_is_not_json_names_the_line(tmp_path, capsys):
     assert "egress.jsonl:2" in capsys.readouterr().err
 
 
-def test_unusable_event_fields_are_errors(tmp_path):
+def test_unreadable_event_fields_are_errors(tmp_path):
+    """Only values with no reading as a destination at all. See the test below."""
     policy = write_policy(tmp_path, {"allow": ["1.2.3.4"]})
     for index, record in enumerate(
         [
-            connect("1.2.3.4", port="443"),
-            connect("1.2.3.4", port=True),
-            connect(""),
-            connect("1.2.3.4", domain=17),
+            connect("1.2.3.4", port=443.5),         # not a whole number
+            connect("1.2.3.4", port="https"),       # not a number
+            connect("1.2.3.4", port=None),
+            connect("1.2.3.4", port="__DROP__"),    # no dst_port at all
+            connect("__DROP__"),                    # no dst_ip at all
+            connect(5),                             # dst_ip not a string
+            connect("1.2.3.4", domain=17),          # would crash domain_matches
         ]
     ):
         out = tmp_path / f"capture{index}"
         write_events(out, [record])
         assert invoke(out, policy).exit_code == EXIT_ERROR, record
+
+
+def test_every_value_the_upload_path_accepts_still_yields_a_verdict(tmp_path):
+    """Measured against EventSchema in pydantic's lax mode, field by field.
+
+    The upload endpoint grades all of these, so refusing them here would break
+    the documented invariant in the one direction that hides a violation: an
+    exit-2 error naming a field instead of a verdict naming a destination.
+    """
+    policy = write_policy(tmp_path, {"allow": ["1.2.3.4"]})
+    accepted = [
+        connect("1.2.3.4", port="443"),                  # numeric string
+        connect("1.2.3.4", port=443.0),                  # integral float
+        connect("1.2.3.4", port=0),                      # address-selection probe
+        connect("1.2.3.4", port=65536),                  # out of range, still read
+        connect("1.2.3.4", port=-1),
+        connect("1.2.3.4", port=True),                   # pydantic reads bool as int
+        connect("1.2.3.4", result="error"),              # a refused connect still counts
+        connect("1.2.3.4", proto="__DROP__"),            # looser than EventSchema
+        connect("1.2.3.4", ts="__DROP__", pid="__DROP__", result="__DROP__"),
+    ]
+    for index, record in enumerate(accepted):
+        out = tmp_path / f"capture{index}"
+        write_events(out, [record])
+        result = invoke(out, policy)
+        assert result.exit_code == EXIT_PASS, (record, result.output)
+
+    # The empty destination address is accepted too, and fails closed: no ip rule
+    # can match it, so it is reported unexpected rather than erroring the file out.
+    out = tmp_path / "empty-ip"
+    write_events(out, [connect("")])
+    assert invoke(out, policy).exit_code == EXIT_FAIL
+
+
+def test_port_zero_probes_do_not_convert_a_fail_into_an_error(tmp_path):
+    """Regression: a 1..65535 floor on observed ports was a FAIL-to-ERROR primitive.
+
+    The four port-0 lines are verbatim from a real `run-app` capture of an app
+    that only called gethostbyname()/getaddrinfo(): glibc's RFC 3484 address
+    sorting connect()s a UDP socket to each candidate answer with
+    sin_port=htons(0). Today's parser drops those as silent probes, so this is
+    the events file an older CLI, another tool, or a genuine connect(ip, 0)
+    produces -- and the loader has to keep grading it, because the alternative is
+    that one connect() to port 0 buries every violation in the file.
+    """
+    out = tmp_path / "capture"
+    write_events(
+        out,
+        [
+            connect("192.168.65.7", 53, "udp"),
+            connect("104.20.23.154", 0, "udp"),
+            connect("172.66.147.243", 0, "udp"),
+            connect("104.20.23.154", 443, "tcp"),  # the real violation
+        ],
+    )
+    policy = write_policy(tmp_path, {"allow": [{"ip": "192.168.65.7", "port": 53}]})
+
+    result = invoke(out, policy)
+    assert result.exit_code == EXIT_FAIL
+    assert "104.20.23.154:443" in result.output
+    assert "104.20.23.154:0" in result.output
 
 
 def test_missing_artifacts_name_the_expected_path(tmp_path, capsys):
