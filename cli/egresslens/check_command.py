@@ -82,6 +82,28 @@ def _reverse_dns_note(matches: int) -> str:
     )
 
 
+def write_line(stream, text: str) -> None:
+    """Print a line, escaping whatever the stream's encoding cannot represent.
+
+    Python already gives stderr ``errors="backslashreplace"`` for this reason and
+    leaves stdout strict, so one non-ASCII character raises UnicodeEncodeError
+    there -- and for a gate that is a traceback and exit 1, which is the FAIL
+    code. That is the same collision the ASCII verdict line was chosen to avoid,
+    reintroduced through three fields this command does not control: the output
+    directory's path, the allowlist's path, and a destination's domain, which is
+    attributed from the traced process's own DNS traffic. Measured with
+    PYTHONIOENCODING=ascii, a passing capture in a directory named ``café``
+    exited 1.
+
+    Adaptive rather than always-ASCII: a UTF-8 console still shows the real name,
+    and only a console that cannot gets ``\\xe9``. Re-escaping already-escaped
+    text is a no-op, so this is safe on stderr too.
+    """
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    safe = text.encode(encoding, errors="backslashreplace").decode(encoding, errors="replace")
+    print(safe, file=stream)
+
+
 class CheckInputError(Exception):
     """An input could not be read, decoded, or parsed.
 
@@ -366,8 +388,8 @@ def check_command(
     except (CheckInputError, EventsError) as exc:
         # Only these two. A genuine bug should still traceback rather than be
         # reported as somebody's malformed input.
-        print(f"Error: {exc}", file=sys.stderr)
+        write_line(sys.stderr, f"Error: {exc}")
         return EXIT_ERROR
 
-    print(render_json(result) if output_format == "json" else render_text(result))
+    write_line(sys.stdout, render_json(result) if output_format == "json" else render_text(result))
     return result.exit_code

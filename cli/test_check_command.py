@@ -11,6 +11,9 @@ so only the direct call reads the same on every leg of the matrix.
 """
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -22,6 +25,7 @@ from egresslens.check_command import (
     EXIT_INCONCLUSIVE,
     EXIT_PASS,
     check_command,
+    write_line,
 )
 from egresslens.main import cli
 
@@ -520,6 +524,62 @@ def test_json_output_still_exits_with_the_verdict(tmp_path):
     result = invoke(out, policy, "--format", "json")
     assert result.exit_code == EXIT_FAIL
     assert json.loads(result.output)["verdict"] == "fail"
+
+
+class AsciiStream:
+    """Stands in for a console that cannot represent everything we might print."""
+
+    encoding = "ascii"
+
+    def __init__(self):
+        self.written = []
+
+    def write(self, text):
+        text.encode(self.encoding)  # raises exactly where a real stream would
+        self.written.append(text)
+
+    def flush(self):
+        pass
+
+
+def test_write_line_escapes_what_the_console_cannot_encode():
+    """A path, an allowlist name or a domain must not be able to raise here."""
+    stream = AsciiStream()
+    write_line(stream, "Allowlist: /work/café/policy.json (1 rules)")
+    assert "caf\\xe9" in "".join(stream.written)
+
+    utf8 = AsciiStream()
+    utf8.encoding = "utf-8"
+    write_line(utf8, "domain: café.example")
+    assert "café.example" in "".join(utf8.written)
+
+
+def test_a_pass_on_an_ascii_only_console_still_exits_zero(tmp_path):
+    """End to end in a subprocess, because only a real stdout has an encoding.
+
+    The domain is the field that matters: it is attributed from the traced
+    process's own DNS traffic, so it is the one an evading app chooses. Before
+    this was fixed, printing it raised UnicodeEncodeError and the PASS exited 1,
+    which reads as FAIL. Non-ASCII *paths* are covered by the unit test above,
+    where no filesystem encoding is involved.
+    """
+    out = tmp_path / "capture"
+    write_events(
+        out,
+        [connect("1.2.3.4", domain="café.example", domain_source="passive_dns")],
+    )
+    policy = write_policy(tmp_path, {"allow": ["1.2.3.4"]})
+
+    environment = dict(os.environ, PYTHONIOENCODING="ascii", PYTHONWARNINGS="ignore")
+    completed = subprocess.run(
+        [sys.executable, "-m", "egresslens", "check", str(out), "--policy", str(policy)],
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert completed.returncode == EXIT_PASS, completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert "Egress policy: PASS" in completed.stdout
 
 
 # --- Composition with the capture commands ------------------------------------
