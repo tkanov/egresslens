@@ -246,8 +246,11 @@ def _gate(
     the existing behaviour changes. With one, the verdict is the gate: FAIL or
     INCONCLUSIVE wins and PASS leaves the command's code alone. Both numbers are
     still recoverable -- run.json records the command's, and the printed verdict
-    block states it -- with one residual ambiguity: a command that itself exits 3
-    under a passing verdict looks like INCONCLUSIVE.
+    block states it -- with two residual ambiguities, both documented rather than
+    engineered around: a command that itself exits 3 under a passing verdict looks
+    like INCONCLUSIVE, and `run-app`'s 1 for an unusable app directory looks like
+    a FAIL. Remapping either would mean rewriting exit codes the capture path
+    owns.
 
     A capture that failed before writing a report is the exception, and it has to
     be: there is no capture to judge, the command has already said what went

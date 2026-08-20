@@ -109,6 +109,12 @@ docs link here.
 policy that was violated. `3` is not a pass either — see
 [docs/policy.md](../docs/policy.md#verdicts).
 
+Two codes are shared and cannot be told apart by number alone: `run-app` returns
+`1` both for an unusable app directory and, under `--policy`, for a FAIL, and a
+traced command that exits `3` on its own is indistinguishable from INCONCLUSIVE.
+Both are deliberate — the alternative is rewriting exit codes the capture owns —
+and both are unambiguous in `--format json` and on stderr.
+
 With `--policy` on `run-app` or `watch`, a non-pass verdict becomes the exit code
 and a passing one leaves the traced command's own code alone. The exception is a
 capture that failed before writing a report, `90` and the `run-app` `1` above:
