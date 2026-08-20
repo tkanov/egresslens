@@ -1,9 +1,40 @@
-"""Metadata generator for run information."""
+"""Run metadata, and the output directory a run owns."""
 
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# PIP_LOG_NAME is the container side of the same file; imported rather than
+# repeated so the two cannot drift apart.
+from egresslens.docker_runner import PIP_LOG_NAME
+
+# Every file a capture writes into its output directory.
+RUN_ARTIFACT_NAMES = (
+    "egress.jsonl",
+    "run.json",
+    "egress.strace",
+    "cmd_stdout",
+    "cmd_stderr",
+    PIP_LOG_NAME,
+)
+
+
+def clear_run_artifacts(output_dir: Path) -> None:
+    """Remove the artifacts of any earlier run from an output directory.
+
+    The directory has to describe the run that just happened. Without this, a run
+    that produces fewer files than the last one -- or none at all, when a
+    dependency install fails before the app starts -- leaves the previous run's
+    report in place, where a reader or a CI gate reads it as this run's result.
+
+    Only the names in RUN_ARTIFACT_NAMES are removed, never a glob: --out is a
+    user-supplied path that may well hold files this tool did not write.
+    """
+    for name in RUN_ARTIFACT_NAMES:
+        artifact = output_dir / name
+        if artifact.is_file():
+            artifact.unlink()
 
 
 def generate_metadata(

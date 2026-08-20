@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Sequence
 
 from egresslens.docker_runner import SETUP_FAILED_EXIT_CODE, run_python_app
-from egresslens.metadata import count_events_from_jsonl, generate_metadata, write_metadata
+from egresslens.metadata import (
+    clear_run_artifacts,
+    count_events_from_jsonl,
+    generate_metadata,
+    write_metadata,
+)
 from egresslens.run_app import validate_app_directory, AppValidationError
 from egresslens.strace_parser import parse_to_jsonl
 
@@ -38,6 +43,11 @@ def run_app_command(
 
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Everything left in here is about to be replaced, so drop it first: what
+    # remains afterwards is then this run and nothing else. Not doing this let a
+    # run that wrote no report at all keep the last one's, exit code included.
+    clear_run_artifacts(output_dir)
 
     # Prepare paths
     app_path_obj = Path(app_meta["app_path"])

@@ -4,10 +4,14 @@
 docker_runner.py is the component that decides what actually gets traced and how
 much isolation the traced code loses, and it had no tests at all -- so neither
 the strace flags the backend depends on nor the container hardening flags were
-pinned by anything. These tests cover command construction only; they never talk
-to a Docker daemon.
+pinned by anything. These tests cover command construction, and what a run leaves
+behind in its output directory; they never talk to a Docker daemon.
+
+The output-directory tests drive the run-app and watch commands rather than the
+runner, because this is the module with the faked docker CLI.
 """
 
+import json
 import shlex
 import subprocess
 from types import SimpleNamespace
@@ -23,6 +27,8 @@ from egresslens.docker_runner import (
     DockerRunner,
     run_python_app,
 )
+from egresslens.run_app_command import run_app_command
+from egresslens.watch import watch_command
 
 
 @pytest.fixture(autouse=True)
@@ -453,6 +459,96 @@ def test_main_module_entry_point_is_runnable(monkeypatch, tmp_path):
     # package name is not importable. `python .` and `python __main__.py` both
     # work; `python -m myapp` does not.
     assert traced in (["python", "."], ["python", "__main__.py"])
+
+
+# --- the output directory describes this run, not the last one ----------------
+
+def python_app(tmp_path, with_requirements=True):
+    """A minimal app directory that passes validate_app_directory."""
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+    (app_dir / "app.py").write_text("print('hello')\n")
+    if with_requirements:
+        (app_dir / "requirements.txt").write_text("requests>=2.0\n")
+    return app_dir
+
+
+def seed_previous_run(output_dir):
+    """A complete, apparently-successful report from an earlier run."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "run.json").write_text(json.dumps({"exit_code": 0}))
+    (output_dir / "egress.jsonl").write_text(
+        '{"ts": 1.0, "pid": 1, "event": "connect", "family": "inet", "proto": "tcp", '
+        '"dst_ip": "93.184.216.34", "dst_port": 443, "result": "ok", "errno": null}\n'
+    )
+    (output_dir / "egress.strace").write_text(
+        '1 1.0 connect(3, {sa_family=AF_INET, sin_port=htons(443), '
+        'sin_addr=inet_addr("93.184.216.34")}, 16) = 0\n'
+    )
+
+
+def test_a_failed_install_removes_the_previous_runs_report(monkeypatch, tmp_path, capsys):
+    """The worst case this guards: a CI gate reading a report of a run that never ran.
+
+    The install fails, so nothing is written -- and if the previous run's
+    artifacts survived, whatever reads the directory next sees a full report with
+    exit_code 0 in it.
+    """
+    fake_subprocess(monkeypatch, exit_code=str(SETUP_FAILED_EXIT_CODE))
+    output_dir = tmp_path / "out"
+    seed_previous_run(output_dir)
+
+    exit_code = run_app_command(
+        app_path=str(python_app(tmp_path)),
+        app_args=[],
+        output_dir=output_dir,
+        image=DEFAULT_IMAGE,
+    )
+
+    assert exit_code == SETUP_FAILED_EXIT_CODE
+    assert not (output_dir / "run.json").exists()
+    assert not (output_dir / "egress.jsonl").exists()
+    assert not (output_dir / "egress.strace").exists()
+    assert "No report was written." in capsys.readouterr().err
+
+
+def test_clearing_the_output_directory_spares_files_it_did_not_write(monkeypatch, tmp_path):
+    """--out is a user-supplied path; only the known artifact names are removed."""
+    fake_subprocess(monkeypatch)
+    output_dir = tmp_path / "out"
+    seed_previous_run(output_dir)
+    (output_dir / "policy.json").write_text('{"allow": ["example.com"]}')
+    (output_dir / "notes.txt").write_text("keep me\n")
+
+    run_app_command(
+        app_path=str(python_app(tmp_path)),
+        app_args=[],
+        output_dir=output_dir,
+        image=DEFAULT_IMAGE,
+    )
+
+    assert (output_dir / "policy.json").read_text() == '{"allow": ["example.com"]}'
+    assert (output_dir / "notes.txt").read_text() == "keep me\n"
+    # and this run's own report is there, not the seeded one
+    assert json.loads((output_dir / "run.json").read_text())["counts"]["total_events"] == 0
+
+
+def test_watch_does_not_report_a_previous_runs_trace(monkeypatch, tmp_path):
+    """watch has no install step, but a container that never starts writes no trace."""
+    fake_subprocess(monkeypatch, image_present=False)
+    output_dir = tmp_path / "out"
+    seed_previous_run(output_dir)
+
+    exit_code = watch_command(
+        command=["curl", "https://example.com"],
+        output_dir=output_dir,
+        image=DEFAULT_IMAGE,
+    )
+
+    assert exit_code == 1
+    assert not (output_dir / "egress.strace").exists()
+    metadata = json.loads((output_dir / "run.json").read_text())
+    assert metadata["counts"]["total_events"] == 0
 
 
 def main():

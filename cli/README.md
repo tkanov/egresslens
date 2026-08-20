@@ -46,7 +46,9 @@ app reached, which for `sample_app` was 84% of the captured events. pip's output
 goes to `pip_install.log`, not to `cmd_stdout`/`cmd_stderr`.
 
 A failed install exits `90`, a status reserved for it: the app never ran, so no
-trace is written and no report is produced. The reason is in `pip_install.log`.
+trace is written and no report is produced. Any earlier capture in the output
+directory is removed first, so nothing stale can be mistaken for this run. The
+reason for the failure is in `pip_install.log`.
 
 > **Known bug:** the `__main__.py` case does not work. The runner invokes
 > `python -m <app dir name>` while the working directory *is* that directory, so

@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Sequence
 
 from egresslens.docker_runner import run_docker_command
-from egresslens.metadata import count_events_from_jsonl, generate_metadata, write_metadata
+from egresslens.metadata import (
+    clear_run_artifacts,
+    count_events_from_jsonl,
+    generate_metadata,
+    write_metadata,
+)
 from egresslens.strace_parser import parse_to_jsonl
 
 
@@ -28,6 +33,11 @@ def watch_command(
     """
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Same invariant as run-app: the directory describes this run only. A
+    # container that never starts writes no trace, and the previous run's would
+    # otherwise be parsed and reported as this one's.
+    clear_run_artifacts(output_dir)
 
     # Get current working directory
     cwd = Path.cwd()
