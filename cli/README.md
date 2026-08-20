@@ -159,7 +159,8 @@ destinations were reached and are not in the verdict, and stays quiet about the
 UDP probes, because those addresses were never contacted -- glibc's address
 sorting `connect()`s a UDP socket to each candidate answer purely to ask the
 kernel which source address it would pick. Both counters appear under `capture`
-in `--format json`.
+in `--format json`; of the two, only `ipv6_connects_skipped` is rendered by the
+UI and the markdown export.
 
 Two shapes stay fail-closed and are counted as probes even though they might not
 be: a connected UDP socket written with `write()` instead of `send*()`, and

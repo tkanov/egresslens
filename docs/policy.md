@@ -102,9 +102,9 @@ judge at all.
 Where the capture counted what it could not record, `egresslens check` reads
 `run.json` from the capture directory and says so: a PASS alongside
 `counts.ipv6_connects_skipped` is a PASS over the IPv4 half of the traffic. The
-UI shows the same counters in its capture panel. `run.json` is optional -- a
-missing or unreadable one is never an error, since it describes the capture
-rather than feeding the verdict.
+UI reports that same counter as "IPv6 not captured" in its Run details panel.
+`run.json` is optional here -- a missing or unreadable one is never an error,
+since it describes the capture rather than feeding the verdict.
 
 ## Evaluating a policy locally
 
@@ -150,8 +150,8 @@ the same objects. So the invariant is not "the CLI and the UI agree" but this,
 which is narrower and true:
 
 > Given the same artifacts, the same allowlist and the same enrichment settings,
-> both surfaces reach the same verdict, because both call the same
-> `evaluate_policy` over events read by loaders that accept the same files.
+> both surfaces reach the same verdict: they call the same `evaluate_policy`, and
+> every value either loader accepts, it reads the same way.
 
 Three qualifications, all of them things you can hit:
 
