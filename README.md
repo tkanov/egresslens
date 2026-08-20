@@ -14,7 +14,7 @@ EgressLens runs an app under `strace`, captures IPv4 network syscalls, and write
 - `egress.strace`: raw trace output
 - `run.json`: command, image, timing, exit code, event counts
 - `cmd_stdout` and `cmd_stderr`: whatever the traced app printed
-- `pip_install.log`: `run-app` only, when the app has a `requirements.txt`
+- `pip_install.log`: `run-app` only, with a `requirements.txt`: the untraced install's output
 
 Upload those to the UI for an aggregated report, with destinations named from DNS answers in the trace and bounded reverse DNS for the rest. Add an allowlist and the report gains a PASS/FAIL/INCONCLUSIVE verdict (see [Egress Policy](#egress-policy)).
 
@@ -77,14 +77,9 @@ egresslens check egresslens-output/ --policy policy.json
 egresslens run-app ./my_app --policy policy.json      # capture, then judge
 ```
 
-| Code | Meaning |
-|---|---|
-| `0` | PASS |
-| `1` | FAIL, at least one destination was off the allowlist |
-| `2` | Error: missing or unreadable artifacts, or a malformed allowlist |
-| `3` | INCONCLUSIVE, nothing was observed |
+`0` is PASS, `1` is FAIL, `3` is INCONCLUSIVE and `2` is any input error, deliberately not `1`: a broken allowlist must never be reported as a violated one. The full table, including the codes `run-app` returns when a capture fails before there is anything to judge, is in [cli/README.md](cli/README.md#exit-codes).
 
-`2` is deliberately not `1`: a broken allowlist must never be reported as a violated one. Reverse DNS is off by default here, because a gate that depends on live DNS is not reproducible. `--format json` puts the whole verdict on stdout for a job that wants to annotate a PR.
+Reverse DNS is off by default here, because a gate that depends on live DNS is not reproducible. `--format json` puts the whole verdict on stdout for a job that wants to annotate a PR.
 
 Rule syntax, matching semantics, and known gotchas: [docs/policy.md](docs/policy.md).
 
@@ -95,7 +90,7 @@ egresslens run-app ./my_python_app --args "arg1 arg2"   # a Python project
 egresslens watch -- curl https://example.com            # any command
 ```
 
-`run-app` looks for an entry point named `__main__.py`, `main.py`, or `app.py`. Options: `--args` (arguments for the traced app), `--out` (output path), `--image` (another image with `strace` installed).
+`run-app` looks for an entry point named `__main__.py`, `main.py`, or `app.py`. Options: `--args` (arguments for the traced app), `--out` (output path), `--image` (another image with `strace` installed), `--policy` (judge the capture afterwards, see [As A CI Gate](#as-a-ci-gate)), `--reverse-dns` (allow live reverse DNS when judging). `watch` takes the same options except `--args`.
 
 `run-app` installs `requirements.txt` before tracing starts, so the trace covers the app and not pip. PyPI and its CDN are deliberately absent from the report; pip's output lands in `pip_install.log`, and a failed install exits 90 without writing a report.
 
@@ -119,11 +114,10 @@ Tracing needs `--cap-add SYS_PTRACE` and `--security-opt seccomp=unconfined`, wh
 
 ## Limits
 
-- IPv4 only. IPv6 destinations are not captured; those reached via `connect()` are at least counted, as `ipv6_connects_skipped`.
+- IPv4 only. IPv6 destinations are not captured; those reached via `connect()` are at least counted, as `ipv6_connects_skipped`, and `egresslens check` says so rather than reporting a bare PASS.
 - Only strace's `network` syscall class is traced, so egress submitted another way (`io_uring`, for example) is invisible and cannot raise a policy FAIL.
-- Destinations are captured from `connect()` and from `sendto`/`sendmsg`/`sendmmsg` on unconnected sockets, so datagram egress that never calls `connect()` is still reported.
-- A UDP `connect()` that never sends is not egress and is not reported. `connect()` on a datagram socket transmits nothing, and glibc's resolver does one per candidate address to pick a source address, so counting them would name destinations the process never contacted. They are counted as `udp_probes_skipped` in `run.json` rather than dropped silently. Two shapes stay conservative and are still reported: a connected UDP socket written with `write()`, and traffic through a `dup()` of the connected socket, neither of which `-e trace=network` records.
-- Domain enrichment reads UDP DNS A-record answers only. DNS-over-HTTPS, DNS-over-TLS, TCP DNS, cached DNS, AAAA records, and `recvmmsg` are out of scope. Reverse DNS fallback skips private ranges and is bounded by backend configuration.
+- Destinations are captured from `connect()` and from `sendto`/`sendmsg`/`sendmmsg` on unconnected sockets, so datagram egress that never calls `connect()` is still reported. A UDP `connect()` that transmits nothing is not a destination and is counted as `udp_probes_skipped`; a connected UDP socket written with `write()`, or through a `dup()` of its fd, is not recorded at all.
+- Domain enrichment reads UDP DNS A-record answers only. DNS-over-HTTPS, DNS-over-TLS, TCP DNS, cached DNS, AAAA records, and `recvmmsg` are out of scope. Reverse DNS fallback skips private ranges; it is on by default in the backend, bounded by its configuration, and off by default in `egresslens check`, bounded by `--reverse-dns-timeout` and `--reverse-dns-max-ips`.
 
 Full detail: [docs/getting-started.md#limitations](docs/getting-started.md#limitations).
 

@@ -15,13 +15,17 @@ Policy file format (JSON)::
 
     {
       "allow": [
-        "*.github.com",                       // wildcard domain (subdomains only)
-        "pypi.org",                           // exact domain
-        "140.82.112.0/20",                    // IP or CIDR
-        {"domain": "files.pythonhosted.org"}, // explicit object form
-        {"ip": "151.101.0.0/16", "port": 443} // constrain the port too
+        "*.github.com",                        // wildcard domain (subdomains only)
+        "crt.sh",                              // exact domain
+        "140.82.112.0/20",                     // IP or CIDR
+        {"domain": "example.com"},             // explicit object form
+        {"ip": "91.199.212.73", "port": 443}   // constrain the port too
       ]
     }
+
+Keep an `ip` rule as narrow as the destination allows: a range shared by many
+tenants, a CDN's /16 for instance, admits all of them and leaves the hard gate
+matching almost anything. See docs/policy.md.
 
 Trust model: `ip`/CIDR rules match the real ``connect()`` destination and are a
 hard gate. `domain` rules match the domain attributed during enrichment, which

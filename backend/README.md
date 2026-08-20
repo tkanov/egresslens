@@ -91,13 +91,17 @@ rules are a hard gate — are in [docs/policy.md](../docs/policy.md).
 The engine itself lives in `egresslens.policy` and `egresslens.enrichment`;
 `app.policy` and `app.enrichment` re-export it and hold no logic. It moved there
 so `egresslens check` can compute the same verdict from capture artifacts as a CI
-gate, without a server. One consequence worth knowing: reverse DNS defaults on
-here and off there, so the two agree on a verdict only for identical artifacts
-under identical enrichment settings.
+gate, without a server. Two consequences worth knowing: reverse DNS defaults on
+here and off there, and this endpoint requires event fields the CLI's loader does
+not, so it rejects with a 400 some files `check` will grade. Both are spelled out
+under [where the CLI and the UI agree,
+exactly](../docs/policy.md#where-the-cli-and-the-ui-agree-exactly);
+`test_engine_shim.py` pins the list.
 
 > **Caveat:** unknown *top-level* keys in a policy file are currently ignored
-> without warning, so a `deny` list written by mistake is silently dropped and
-> the run can report `pass`. Unknown keys *inside* a rule object are rejected.
+> without warning, so a `deny` list written beside `allow` is silently dropped and
+> the run can report `pass`. A document containing *only* `deny` has no allowlist
+> and is rejected with a 400. Unknown keys *inside* a rule object are rejected.
 > Only `allow` is honoured.
 
 ## Domain enrichment

@@ -92,20 +92,29 @@ on stdout and nothing else, unexpected destinations included.
 
 #### Exit codes
 
-| Code | Meaning |
-|---|---|
-| `0` | PASS |
-| `1` | FAIL — at least one destination was off the allowlist |
-| `2` | Error — missing or unreadable artifacts, or a malformed allowlist |
-| `3` | INCONCLUSIVE — an allowlist was supplied and nothing was observed |
+Every code any of the three commands can return. This is the only copy; the other
+docs link here.
+
+| Code | Command | Meaning |
+|---|---|---|
+| `0` | all | PASS, or a capture that ran with no allowlist to judge it |
+| `1` | `check` | FAIL — at least one destination was off the allowlist |
+| `1` | `run-app` | The app directory could not be used (no entry point, bad syntax) |
+| `2` | `check` | Error — missing or unreadable artifacts, or a malformed allowlist |
+| `3` | `check` | INCONCLUSIVE — an allowlist was supplied and nothing was observed |
+| `90` | `run-app` | Installing `requirements.txt` failed, so the app never ran and no report was written |
+| other | `run-app`, `watch` | The traced command's own exit code, passed through |
 
 `2` is never `1`: a policy that could not be read must not be reported as a
 policy that was violated. `3` is not a pass either — see
 [docs/policy.md](../docs/policy.md#verdicts).
 
 With `--policy` on `run-app` or `watch`, a non-pass verdict becomes the exit code
-and a passing one leaves the traced command's own code alone. Without `--policy`
-nothing changes.
+and a passing one leaves the traced command's own code alone. The exception is a
+capture that failed before writing a report, `90` and the `run-app` `1` above:
+there is nothing to judge, the command has already said what went wrong, and
+turning that into a `2` would point at the allowlist instead of at pip. Without
+`--policy` nothing changes at all.
 
 ### Options
 
@@ -137,9 +146,25 @@ Written to the output directory:
 | `cmd_stderr` | The traced command's stderr |
 | `pip_install.log` | `run-app` only, with a `requirements.txt`: the untraced install's output |
 
-IPv6 destinations are not captured. Those reached via `connect()` are counted in
-`run.json` under `counts.ipv6_connects_skipped`, so the number is visible even
-though the destinations are not.
+`run.json`'s `counts` record what the capture could *not* put in the report, so
+the gap is visible even when the destinations are not:
+
+| Counter | Meaning |
+|---|---|
+| `ipv6_connects_skipped` | AF_INET6 `connect()` calls seen but not captured (IPv4 only) |
+| `udp_probes_skipped` | UDP `connect()` calls that transmitted nothing, so no packet reached the address |
+
+`check` reads both. It raises a note for skipped IPv6 connections, because those
+destinations were reached and are not in the verdict, and stays quiet about the
+UDP probes, because those addresses were never contacted -- glibc's address
+sorting `connect()`s a UDP socket to each candidate answer purely to ask the
+kernel which source address it would pick. Both counters appear under `capture`
+in `--format json`.
+
+Two shapes stay fail-closed and are counted as probes even though they might not
+be: a connected UDP socket written with `write()` instead of `send*()`, and
+traffic sent through a `dup()` of a connected fd. `-e trace=network` records
+neither syscall, so nothing in the trace can tell them apart from a probe.
 
 A UDP `connect()` with no send on the same socket is excluded, and counted under
 `counts.udp_probes_skipped`. `connect()` on a datagram socket only sets a default

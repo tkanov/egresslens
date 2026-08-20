@@ -56,9 +56,12 @@ tracing starts, so PyPI and its CDN are not observed and need no rules.
 - An object rule may add a **port**; every field it declares must match.
 
 `allow` is the only key read. There is no deny list, and an allowlist holds at
-most 1000 rules. Note that unknown keys *inside* a rule object are rejected, but
-unknown *top-level* keys are currently ignored silently, so a stray `deny` block
-is dropped without warning rather than failing the upload.
+most 1000 rules. Unknown keys *inside* a rule object are rejected, but unknown
+*top-level* keys are ignored silently, which cuts two ways and both surfaces
+behave the same: a `deny` block written alongside `allow` is dropped without
+warning and the run can still report PASS, while a document containing *only*
+`deny` has no `allow` list and is rejected outright (HTTP 400 on upload, exit 2
+from `egresslens check`).
 
 Combining `domain` and `ip` in one rule does not give you an IP hard gate: a rule
 that names a domain is only ever reached through domain matching, so the same IP
@@ -96,6 +99,13 @@ submitted outside strace's `network` syscall class are not observed, so they
 cannot raise a FAIL. An INCONCLUSIVE verdict says the capture yielded nothing to
 judge at all.
 
+Where the capture counted what it could not record, `egresslens check` reads
+`run.json` from the capture directory and says so: a PASS alongside
+`counts.ipv6_connects_skipped` is a PASS over the IPv4 half of the traffic. The
+UI shows the same counters in its capture panel. `run.json` is optional -- a
+missing or unreadable one is never an error, since it describes the capture
+rather than feeding the verdict.
+
 ## Evaluating a policy locally
 
 The verdict is not UI-only. `egresslens check` computes it from a capture
@@ -107,18 +117,19 @@ egresslens check egresslens-output/ --policy policy.json
 egresslens run-app ./my_app --policy policy.json    # capture, then judge
 ```
 
-| Code | Meaning |
-|---|---|
-| `0` | PASS |
-| `1` | FAIL — at least one destination was off the allowlist |
-| `2` | Error — missing or unreadable artifacts, or a malformed allowlist |
-| `3` | INCONCLUSIVE — an allowlist was supplied and nothing was observed |
+`0` is PASS, `1` is FAIL, `3` is INCONCLUSIVE, and `2` is any input error. The
+full table, including the codes a capture can return before a verdict exists, is
+in [cli/README.md](../cli/README.md#exit-codes) and is not repeated here.
 
 `2` is deliberately distinct from `1`. A gate that reported "your policy file has
 a typo" the same way it reports "your app called an unlisted host" would be worse
-than no gate. Note that this makes the CLI stricter than the upload path in one
-place: a `deny`-only document is silently ignored on upload but is an exit-2
-error here, because it contains no `allow` list.
+than no gate.
+
+With `--policy` on `run-app` or `watch`, a non-pass verdict becomes the exit
+code, and a capture that failed before writing a report keeps its own status
+instead: there is nothing to judge, and replacing `run-app`'s `90` for a failed
+dependency install with a `2` that reads as "malformed allowlist" would point at
+the wrong file.
 
 ### Enrichment, and what a PASS rests on
 
@@ -131,10 +142,34 @@ reproducible, and reverse DNS needs egress from wherever the check runs, depends
 on that host's resolver, and reads records that change. `--reverse-dns` opts in,
 and the output then says how many names came from live lookups.
 
-The parity invariant is therefore narrower than "the CLI and the UI agree":
-identical artifacts and identical enrichment settings produce an identical
-verdict, because both surfaces call the same `evaluate_policy`. With default
-settings they can differ, and reverse DNS is the reason.
+### Where the CLI and the UI agree, exactly
+
+The engine is literally shared: `app.policy` and `app.enrichment` re-export
+`egresslens.policy` and `egresslens.enrichment`, and a test pins that they are
+the same objects. So the invariant is not "the CLI and the UI agree" but this,
+which is narrower and true:
+
+> Given the same artifacts, the same allowlist and the same enrichment settings,
+> both surfaces reach the same verdict, because both call the same
+> `evaluate_policy` over events read by loaders that accept the same files.
+
+Three qualifications, all of them things you can hit:
+
+- **Enrichment defaults differ.** Reverse DNS is on for an upload and off for
+  `check`, so the *default* settings are not the same settings. Pass
+  `--reverse-dns` to compare like with like.
+- **The CLI reads two things the upload endpoint refuses**, neither able to
+  change a verdict: an events file missing `ts`, `pid`, `event`, `family` or
+  `result` (the engine never reads them), and one missing `proto` (it selects a
+  displayed label and is never matched against a rule). Files the UI rejects with
+  a 400 can therefore still be graded here.
+- **Everything else is the same file set.** Values the upload path coerces --
+  a numeric string or an integral float for `dst_port`, a bool, a port outside
+  1..65535, an empty `dst_ip` -- are accepted here too and judged identically.
+  Refusing them would have been a worse divergence than accepting them: a real
+  FAIL would surface as an exit-2 error naming a field instead of a verdict
+  naming a destination. `backend/test_engine_shim.py` compares the two readers
+  case by case, so this list cannot quietly grow.
 
 `check` also reports how many expected destinations were covered by an `ip`/CIDR
 rule and how many by a `domain` rule alone. The second number is the part of the
@@ -143,9 +178,22 @@ matched by a combined `{"domain": ..., "ip": ...}` rule counts as domain-only,
 which is the same point made above: such a rule is not an IP hard gate.
 
 If an allowlist has `domain` rules and *no* destination ended up with a domain
-attributed, `check` says so explicitly. That case FAILs everything, and without
-being told why it is indistinguishable from a broken tool. The usual cause is a
-capture whose `egress.strace` was not written or not passed.
+attributed, every domain rule in it was dead, and `check` says so explicitly --
+without being told, that is indistinguishable from a broken tool. It distinguishes
+the two causes, because they need different fixes:
+
+- **No trace was read**, and the events carried no attribution of their own.
+  Capture `egress.strace` alongside `egress.jsonl`, or point `--strace` at it.
+- **A trace was read and named none of the observed destinations.** Passive DNS
+  can only name an address that appeared in a DNS *answer*, so it can never name
+  the resolver the queries went to, nor anything reached without a lookup, such
+  as a literal IP address. Those destinations need an `ip`/CIDR rule; no domain
+  rule will ever match them. `run-app ./sample_app --args "dns example.com"` is
+  exactly this case, which is worth knowing before you write your first policy.
+
+The note is independent of the verdict, so read it as "these rules did nothing",
+not as "everything failed". A domain-only allowlist does FAIL every destination
+here; a mixed one can still PASS on its `ip` rules with the note attached.
 
 ### Machine-readable output
 
