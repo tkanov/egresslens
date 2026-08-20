@@ -8,15 +8,9 @@ Trace outbound network activity from Python apps in Docker, write the events as 
 
 ## What It Does
 
-EgressLens runs an app under `strace`, captures IPv4 network syscalls, and writes:
+EgressLens runs an app under `strace` and captures IPv4 network syscalls, writing `egress.jsonl` (parsed events), `egress.strace` (the raw trace), `run.json` (command, image, timing, counts), and the app's own output. Full list: [cli/README.md](cli/README.md#output).
 
-- `egress.jsonl`: parsed connection events
-- `egress.strace`: raw trace output
-- `run.json`: command, image, timing, exit code, event counts
-- `cmd_stdout` and `cmd_stderr`: whatever the traced app printed
-- `pip_install.log`: `run-app` only, with a `requirements.txt`: the untraced install's output
-
-Upload those to the UI for an aggregated report, with destinations named from DNS answers in the trace and bounded reverse DNS for the rest. Add an allowlist and the report gains a PASS/FAIL/INCONCLUSIVE verdict (see [Egress Policy](#egress-policy)).
+Upload those to the UI for an aggregated report, with destinations named from DNS answers in the trace and bounded reverse DNS for the rest. Add an allowlist and the report gains a PASS/FAIL/INCONCLUSIVE verdict.
 
 ## Quick Start
 
@@ -46,7 +40,7 @@ cd frontend
 npm install && npm run dev
 ```
 
-Open `http://localhost:5173` and upload `egress.jsonl`, the only required file. Optional extras: `run.json` (run metadata), `egress.strace` (domain enrichment), `policy.json` (a verdict).
+Open `http://localhost:5173` and upload `egress.jsonl`, the only required file. `run.json`, `egress.strace` and `policy.json` each add something; the walkthrough is [docs/getting-started.md](docs/getting-started.md).
 
 ![Report view](docs/images/report.png)
 
@@ -60,28 +54,21 @@ Upload a `policy.json` allowlist and every observed destination is checked again
 | **FAIL** | At least one did not | "Unexpected destinations", high |
 | **INCONCLUSIVE** | An allowlist was uploaded but nothing was observed | "Egress policy not evaluated", medium |
 
-Before trusting a verdict:
-
-- `ip`/CIDR rules are a hard gate. `domain` rules match a name attributed from DNS answers in the traced process's own trace, which evading code could forge, so treat them as advisory.
-- Do not read "not FAIL" as PASS. INCONCLUSIVE means the capture gave the allowlist nothing to judge, and a failed capture looks identical to a genuinely quiet run.
-- A PASS covers only what was captured (see [Limits](#limits)) and is independent of the other flags, so it can appear next to an "Unusual ports" flag.
+Before trusting one: `ip`/CIDR rules are a hard gate, but `domain` rules match a name attributed from the traced process's own DNS traffic, which evading code could forge. Do not read "not FAIL" as PASS either, because INCONCLUSIVE means the capture gave the allowlist nothing to judge, and a failed capture looks identical to a genuinely quiet run. A PASS covers only what was captured, so read it against [Limits](#limits).
 
 `egresslens check egresslens-output/ --policy policy.json` returns the same verdict as an exit code, without Docker or the backend, so a capture can gate CI. Exit codes and the reverse-DNS default: [cli/README.md](cli/README.md#exit-codes). Rule syntax, matching semantics, and known gotchas: [docs/policy.md](docs/policy.md).
 
 ## CLI
 
 ```bash
-egresslens run-app ./my_python_app --args "arg1 arg2"   # a Python project
-egresslens watch -- curl https://example.com            # any command
+egresslens run-app ./my_python_app --args "arg1 arg2"       # a Python project
+egresslens watch -- curl https://example.com                # any command
+egresslens check egresslens-output/ --policy policy.json    # judge a capture
 ```
 
-`run-app` looks for an entry point named `__main__.py`, `main.py`, or `app.py`. Options: `--args` (arguments for the traced app), `--out` (output path), `--image` (another image with `strace` installed), `--policy` (judge the capture afterwards, see [Egress Policy](#egress-policy)), `--reverse-dns` (allow live reverse DNS when judging). `watch` takes the same options except `--args`.
-
-`run-app` installs `requirements.txt` before tracing starts, so the trace covers the app and not pip. PyPI and its CDN are deliberately absent from the report; pip's output lands in `pip_install.log`, and a failed install exits 90 without writing a report.
+`run-app` looks for an entry point named `__main__.py`, `main.py`, or `app.py`, and installs `requirements.txt` before tracing starts, so the trace covers the app and not pip. A failed install exits 90 without writing a report. Options, exit codes, and programmatic use: [cli/README.md](cli/README.md).
 
 > **Known bug:** `__main__.py` is checked first but fails with `ModuleNotFoundError`, because the runner invokes it in a way that leaves the module off `sys.path`. Use `main.py` or `app.py` for now.
-
-More detail: [cli/README.md](cli/README.md).
 
 ## Repo Map
 
@@ -89,7 +76,7 @@ More detail: [cli/README.md](cli/README.md).
 - `backend/`: FastAPI upload, aggregation, enrichment, policy, and export API
 - `frontend/`: React UI for uploads and reports
 - `sample_app/`: small app for predictable demo traffic
-- `Dockerfile`, with `docker-build.sh`, `docker-teardown.sh`, and `test-docker.sh` beside it at the repo root: the tracing image
+- `Dockerfile` and its helper scripts at the repo root: the tracing image
 - `scripts/demo_capture.sh`: one live capture for the demo flow
 - `docs/`: [getting started](docs/getting-started.md), [policy reference](docs/policy.md), [demo flow](docs/demo.md)
 
@@ -99,10 +86,10 @@ Tracing needs `--cap-add SYS_PTRACE` and `--security-opt seccomp=unconfined`, wh
 
 ## Limits
 
-- IPv4 only. IPv6 destinations are not captured; those reached via `connect()` are at least counted, as `ipv6_connects_skipped`, and `egresslens check` says so rather than reporting a bare PASS.
+- IPv4 only. IPv6 destinations are counted as `ipv6_connects_skipped`, not captured, and `egresslens check` says so rather than printing a bare PASS.
 - Only strace's `network` syscall class is traced, so egress submitted another way (`io_uring`, for example) is invisible and cannot raise a policy FAIL.
-- Destinations are captured from `connect()` and from `sendto`/`sendmsg`/`sendmmsg` on unconnected sockets, so datagram egress that never calls `connect()` is still reported. A UDP `connect()` that transmits nothing is not a destination and is counted as `udp_probes_skipped`; a connected UDP socket written with `write()`, or through a `dup()` of its fd, is not recorded at all.
-- Domain enrichment reads UDP DNS A-record answers only. DNS-over-HTTPS, DNS-over-TLS, TCP DNS, cached DNS, AAAA records, and `recvmmsg` are out of scope. Reverse DNS fallback skips private ranges; it is on by default in the backend, bounded by its configuration, and off by default in `egresslens check`, bounded by `--reverse-dns-timeout` and `--reverse-dns-max-ips`.
+- Datagram egress that never calls `connect()` is still reported. A UDP `connect()` that transmits nothing is not a destination, and is counted as `udp_probes_skipped`; a connected UDP socket written with `write()`, or through a `dup()` of its fd, is not recorded at all.
+- Domain enrichment reads UDP DNS A-record answers only, so DNS-over-HTTPS, TCP DNS, cached DNS and AAAA records are out of scope. Reverse DNS fallback skips private ranges, and is on by default in the backend but off in `egresslens check`.
 
 Full detail: [docs/getting-started.md#limitations](docs/getting-started.md#limitations).
 
