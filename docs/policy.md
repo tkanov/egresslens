@@ -169,7 +169,8 @@ Three qualifications, all of them things you can hit:
   Refusing them would have been a worse divergence than accepting them: a real
   FAIL would surface as an exit-2 error naming a field instead of a verdict
   naming a destination. `backend/test_engine_shim.py` compares the two readers
-  case by case, so this list cannot quietly grow.
+  over the values enumerated here, so a regression on any of them is caught; it
+  does not enumerate every possible value.
 
 `check` also reports how many expected destinations were covered by an `ip`/CIDR
 rule and how many by a `domain` rule alone. The second number is the part of the
@@ -199,8 +200,14 @@ here; a mixed one can still PASS on its `ip` rules with the note attached.
 
 `--format json` writes the whole verdict to stdout and nothing else: the engine's
 verdict dict verbatim, the unexpected-destination list (truncated at 50, as on
-upload, while `unexpected_count` stays exact), enrichment counters, and the notes
-the text output prints. `schema_version` is `1`.
+upload, while `unexpected_count` stays exact), enrichment counters, the notes the
+text output prints, and a `capture` block holding `run.json`'s counts as they
+were written. That block is the only place `udp_probes_skipped` is reported.
+`schema_version` is `1`; a new key is not a breaking change.
+
+On an input error nothing is written to stdout at all -- not an error object --
+and the exit code is `2`. A consumer piping to `jq` sees empty input, which is
+the intended shape: there is no verdict to report.
 
 SARIF is deliberately not emitted. SARIF results are anchored to a
 `physicalLocation`, and an egress destination has no file or line, so the output

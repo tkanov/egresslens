@@ -62,7 +62,7 @@ The CLI defaults to this local image.
 From the repo root:
 
 ```bash
-egresslens run-app ./sample_app --args "dns example.com"
+egresslens run-app ./sample_app --args "all example.com"
 ```
 
 Example:
@@ -229,8 +229,9 @@ with a FAIL; the full table is in
 default, unlike on upload, to keep the same artifacts giving the same answer on
 every run.
 
-Run it against the `dns example.com` capture instead and it still passes, but
-prints a note saying the trace named none of the observed destinations. That is
+Run `--args "dns example.com"` instead, which reaches only the resolver, and the
+same allowlist still passes but prints a note saying the trace named none of the
+observed destinations. That is
 worth reading rather than dismissing: that capture reaches only the resolver, so
 the `crt.sh` rule did nothing and the whole verdict rested on the `ip` rule.
 
