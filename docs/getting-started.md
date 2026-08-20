@@ -15,8 +15,12 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install -e ../cli
 uvicorn app.main:app --reload --port 8000
 ```
+
+`pip install -e ../cli` is required, not an extra: the policy and enrichment
+engine lives in the `egresslens` package and the backend re-exports it.
 
 Leave this terminal running. The API will be available at `http://localhost:8000`.
 

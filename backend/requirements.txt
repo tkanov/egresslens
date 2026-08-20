@@ -13,3 +13,15 @@ pyyaml>=6.0.3,<7.0
 
 # Required at runtime by fastapi.testclient, which the backend tests use.
 httpx>=0.28.1,<1.0
+
+# Not listed above, but required: the `egresslens` CLI package, which owns the
+# policy and enrichment engine that app.policy and app.enrichment re-export.
+# Install it separately, from the repo root:
+#
+#     pip install -e ./cli
+#
+# It is a comment rather than a requirement line because pip resolves relative
+# paths in a requirements file against the current working directory, not the
+# file: the docs run `pip install -r requirements.txt` from inside backend/ and
+# CI runs `pip install -r backend/requirements.txt` from the repo root, and no
+# single relative path satisfies both.

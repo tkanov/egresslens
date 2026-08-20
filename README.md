@@ -37,7 +37,7 @@ Start the API, then the UI:
 ```bash
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -e ../cli
 uvicorn app.main:app --reload --port 8000
 ```
 

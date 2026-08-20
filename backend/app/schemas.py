@@ -5,7 +5,13 @@ from datetime import datetime
 
 
 class EventSchema(BaseModel):
-    """Event schema matching JSONL format."""
+    """Event schema matching JSONL format.
+
+    Must stay structurally compatible with `egresslens.events.EventLike`: the
+    policy engine is handed these instances and reads dst_ip/dst_port/proto while
+    writing domain/domain_source. A test pins that, since nothing else would
+    notice a rename here until a verdict raised AttributeError.
+    """
     ts: float
     pid: int
     event: str

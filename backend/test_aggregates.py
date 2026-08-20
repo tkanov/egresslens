@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from app.main import compute_aggregates
+from app.main import _md_escape, compute_aggregates
 from app.schemas import EventSchema
 
 
@@ -94,11 +94,20 @@ def test_top_destinations_use_event_domain_attribution():
     print("✓ top destinations use event-carried domain attribution")
 
 
+def test_md_escape_neutralizes_table_injection():
+    # Lives here rather than beside the policy tests, which moved to cli/, because
+    # _md_escape belongs to the backend's markdown export, not to the engine.
+    assert _md_escape("evil.com | fake") == "evil.com \\| fake"
+    assert "\n" not in _md_escape("line1\nline2")
+    assert _md_escape("`code`") == "\\`code\\`"
+
+
 def main():
     test_modal_protocol_per_destination()
     test_protocol_tie_breaks_on_first_seen()
     test_empty_events()
     test_top_destinations_use_event_domain_attribution()
+    test_md_escape_neutralizes_table_injection()
     print("all aggregate tests passed")
 
 

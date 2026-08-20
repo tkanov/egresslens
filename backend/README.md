@@ -12,8 +12,12 @@ Requires Python 3.10+ (FastAPI and `python-multipart` both declare that floor).
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+pip install -e ../cli
 uvicorn app.main:app --reload --port 8000
 ```
+
+The second install is not optional: the policy and enrichment engine lives in the
+`egresslens` CLI package, and `app.policy` / `app.enrichment` re-export it.
 
 The API is then at `http://localhost:8000`, with interactive docs at `/docs`.
 
@@ -152,7 +156,7 @@ FLAG_HIGH_DEST_THRESHOLD=100 uvicorn app.main:app --reload --port 8000
 pytest is not in `requirements.txt`, so install it too:
 
 ```bash
-pip install -r requirements.txt pytest
+pip install -r requirements.txt -e ../cli pytest
 pytest -v
 ```
 
