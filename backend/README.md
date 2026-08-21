@@ -1,4 +1,4 @@
-# EgressLens Backend
+# EgressLens backend
 
 FastAPI service that ingests CLI trace artifacts, aggregates them into a report,
 enriches destinations with domains, and judges them against an optional egress

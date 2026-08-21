@@ -6,13 +6,13 @@ Trace outbound network activity from Python apps in Docker, write the events as 
 [![CLI Python 3.9+](https://img.shields.io/badge/cli%20python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![Docker 20.10+](https://img.shields.io/badge/docker-20.10+-2496ED.svg)](https://www.docker.com/)
 
-## What It Does
+## What it does
 
 EgressLens runs an app under `strace` and captures IPv4 network syscalls, writing `egress.jsonl` (parsed events), `egress.strace` (the raw trace), `run.json` (command, image, timing, counts), and the app's own output. Full list: [cli/README.md](cli/README.md#output).
 
 Upload those to the UI for an aggregated report, with destinations named from DNS answers in the trace and bounded reverse DNS for the rest. Add an allowlist and the report gains a PASS/FAIL/INCONCLUSIVE verdict.
 
-## Quick Start
+## Quick start
 
 Needs Docker 20.10+ and Python 3.9+. Viewing a report also needs Python 3.10+ for the backend and Node.js 20.19+ (or 22.13+) for the UI.
 
@@ -24,7 +24,7 @@ egresslens run-app ./sample_app --args "dns example.com"
 
 Output lands in `egresslens-output/`.
 
-## View A Report
+## View a report
 
 Start the API, then the UI:
 
@@ -44,7 +44,7 @@ Open `http://localhost:5173` and upload `egress.jsonl`, the only required file. 
 
 ![Report view](docs/images/report.png)
 
-## Egress Policy
+## Egress policy
 
 Upload a `policy.json` allowlist and every observed destination is checked against it. The verdict is three-way, not a boolean:
 
@@ -70,7 +70,7 @@ egresslens check egresslens-output/ --policy policy.json    # judge a capture
 
 > **Known bug:** `__main__.py` is checked first but fails with `ModuleNotFoundError`, because the runner invokes it in a way that leaves the module off `sys.path`. Use `main.py` or `app.py` for now.
 
-## Repo Map
+## Repo map
 
 - `cli/`: capture network activity, write trace artifacts, judge them with `egresslens check`
 - `backend/`: FastAPI upload, aggregation, enrichment, policy, and export API
@@ -80,7 +80,7 @@ egresslens check egresslens-output/ --policy policy.json    # judge a capture
 - `scripts/demo_capture.sh`: one live capture for the demo flow
 - `docs/`: [getting started](docs/getting-started.md), [policy reference](docs/policy.md), [demo flow](docs/demo.md)
 
-## Security Model
+## Security model
 
 Tracing needs `--cap-add SYS_PTRACE` and `--security-opt seccomp=unconfined`, which reduce isolation. The CLI still mounts the app read-only, drops other capabilities, uses `no-new-privileges`, and provides tmpfs scratch space. Treat traced code as code you are choosing to run.
 

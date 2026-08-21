@@ -1,4 +1,4 @@
-# EgressLens Frontend
+# EgressLens frontend
 
 React + TypeScript UI for uploading trace artifacts and reading the resulting
 egress report.
