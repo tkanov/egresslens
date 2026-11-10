@@ -14,13 +14,13 @@
     "docs:screenshots": "playwright test --project=docs"
   },
   "dependencies": {
-    "@radix-ui/react-slot": "^1.3.3",
+    "@radix-ui/react-slot": "^1.5.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
-    "lucide-react": "^1.48.0",
+    "lucide-react": "^1.64.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^7.18.4",
+    "react-router-dom": "^7.18.5",
     "recharts": "^2.10.3",
     "tailwind-merge": "^3.7.0"
   },
